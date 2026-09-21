@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1e40af">
+  <title>🔧 Gestione Officina</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- SCHERMATA LOGIN -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <div class="login-logo">🔧</div>
+    <h1>Luca autoriparazioni</h1>
+    <p class="login-sub">Inserisci la password per accedere</p>
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') tentaLogin()">
+    <button class="btn btn-primary btn-block" onclick="tentaLogin()">🔓 Accedi</button>
+    <div id="loginError" class="login-error"></div>
+  </div>
+</div>
+
+<!-- APP (nascosta fino al login) -->
+<div id="appContainer" style="display:none">
+
+<header>
+  <h1>🔧 Luca autoriparazioni</h1>
+  <div class="sub" id="headerSub">Caricamento...</div>
+</header>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="dashboard">📊 Home</div>
+    <div class="tab" data-tab="clienti">👥 Clienti</div>
+    <div class="tab" data-tab="ricambi">🔩 Ricambi</div>
+    <div class="tab" data-tab="impostazioni">⚙️</div>
+  </div>
+
+  <div id="view-dashboard"></div>
+  <div id="view-clienti" style="display:none"></div>
+  <div id="view-scheda-cliente" style="display:none"></div>
+  <div id="view-ricambi" style="display:none"></div>
+  <div id="view-impostazioni" style="display:none"></div>
+</div>
+
+<!-- Modal generico -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal()">&times;</span>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<div id="preventivoTemplate" style="display:none"></div>
+
+</div> <!-- fine appContainer -->
+
+<script src="script.js"></script>
+</body>
+</html>
