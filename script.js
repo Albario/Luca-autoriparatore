@@ -1,20 +1,88 @@
-// ========== AUTENTICAZIONE ==========
-// ⚠️ SOSTITUISCI QUESTO HASH con il tuo (generato da https://emn178.github.io/online-tools/sha256.html)
+// ============================================================
+// 🔥 CONFIGURAZIONE FIREBASE
+// ⚠️ SOSTITUISCI con la configurazione che hai copiato da Firebase
+// ============================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDGA4n2Wj9MzXjETRPxQxLTAsR1yRxvYEo",
+  authDomain: "officina-b683c.firebaseapp.com",
+  projectId: "officina-b683c",
+  storageBucket: "officina-b683c.firebasestorage.app",
+  messagingSenderId: "496757695481",
+  appId: "1:496757695481:web:6e5f3f0eea74d29d9ed328"
+};
+
+// ============================================================
+// 🔐 PASSWORD (come prima)
+// ⚠️ SOSTITUISCI con il tuo hash SHA-256
+// ============================================================
 const PASSWORD_HASH = 'a3a3e110f5bce3211d1d265f3ace7fab88dce16019db6062082347f8e1677c21';
 
-// Controllo login all'avvio
+// ============================================================
+// FIREBASE INIT
+// ============================================================
+let dbFirestore; // database Firestore
+let unsubscribers = []; // listener per aggiornamenti in tempo reale
+
+// Carica Firebase da CDN (versione compat, più semplice)
+const firebaseScript = document.createElement('script');
+firebaseScript.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js';
+firebaseScript.onload = () => {
+  const firestoreScript = document.createElement('script');
+  firestoreScript.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js';
+  firestoreScript.onload = () => {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      dbFirestore = firebase.firestore();
+      // Abilita persistenza offline (funziona anche senza internet)
+      dbFirestore.enablePersistence().catch(err => {
+        console.warn('Persistenza offline non disponibile:', err);
+      });
+      console.log('✅ Firebase connesso');
+    } catch (err) {
+      console.error('❌ Errore Firebase:', err);
+      alert('Errore di connessione a Firebase. Controlla la configurazione.');
+    }
+  };
+  document.head.appendChild(firestoreScript);
+};
+document.head.appendChild(firebaseScript);
+
+// ============================================================
+// DATABASE LOCALE (cache)
+// ============================================================
+let db = {
+  clienti: [],
+  auto: [],
+  interventi: [],
+  preventivi: [],
+  nextId: 1
+};
+
+// ============================================================
+// AUTENTICAZIONE
+// ============================================================
 (async function checkAuth() {
   const logged = sessionStorage.getItem('officina_logged');
   if (logged === 'ok') {
-    document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appContainer').style.display = 'block';
-    initApp();
+    await waitForFirebase();
+    showApp();
   } else {
     document.getElementById('loginScreen').style.display = 'flex';
     document.getElementById('appContainer').style.display = 'none';
     document.getElementById('loginPassword').focus();
   }
 })();
+
+function waitForFirebase() {
+  return new Promise(resolve => {
+    const check = setInterval(() => {
+      if (dbFirestore) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 100);
+  });
+}
 
 async function sha256(message) {
   const msgBuffer = new TextEncoder().encode(message);
@@ -28,9 +96,8 @@ async function tentaLogin() {
   const hash = await sha256(pwd);
   if (hash === PASSWORD_HASH) {
     sessionStorage.setItem('officina_logged', 'ok');
-    document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appContainer').style.display = 'block';
-    initApp();
+    await waitForFirebase();
+    showApp();
   } else {
     const err = document.getElementById('loginError');
     err.textContent = '❌ Password errata';
@@ -40,37 +107,166 @@ async function tentaLogin() {
   }
 }
 
+async function showApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('loadingScreen').style.display = 'flex';
+  
+  await caricaDatiDaCloud();
+  avviaListenerTempoReale();
+  
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('appContainer').style.display = 'block';
+  initApp();
+}
+
 function logout() {
   if (!confirm('Vuoi uscire?')) return;
+  unsubscribers.forEach(unsub => unsub());
+  unsubscribers = [];
   sessionStorage.removeItem('officina_logged');
   location.reload();
 }
 
-// ========== DATABASE ==========
-const DB_KEY = 'officina_db_v2';
-let db = loadDB();
-
-function loadDB() {
-  const raw = localStorage.getItem(DB_KEY);
-  if (raw) {
-    try { 
-      const d = JSON.parse(raw);
-      if (!d.preventivi) d.preventivi = [];
-      if (!d.nextId) d.nextId = 1;
-      return d;
-    } catch(e) {}
+// ============================================================
+// CARICAMENTO DATI DA FIREBASE
+// ============================================================
+async function caricaDatiDaCloud() {
+  setSyncStatus('syncing', '🔄 Sync...');
+  try {
+    const [clientiSnap, autoSnap, interventiSnap, preventiviSnap, configSnap] = await Promise.all([
+      dbFirestore.collection('clienti').get(),
+      dbFirestore.collection('auto').get(),
+      dbFirestore.collection('interventi').get(),
+      dbFirestore.collection('preventivi').get(),
+      dbFirestore.collection('config').doc('ids').get()
+    ]);
+    
+    db.clienti = clientiSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+    db.auto = autoSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+    db.interventi = interventiSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+    db.preventivi = preventiviSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+    db.nextId = configSnap.exists ? (configSnap.data().nextId || 1) : 1;
+    
+    setSyncStatus('online', '🟢 Online');
+  } catch (err) {
+    console.error('Errore caricamento:', err);
+    setSyncStatus('error', '❌ Errore sync');
+    // Prova a caricare da cache locale
+    const cached = localStorage.getItem('officina_db_cache');
+    if (cached) {
+      try {
+        db = JSON.parse(cached);
+        alert('⚠️ Impossibile connettersi a Firebase. Uso dati in cache.');
+      } catch(e) {}
+    }
   }
-  return { clienti: [], auto: [], interventi: [], preventivi: [], nextId: 1 };
 }
 
-function saveDB() {
-  localStorage.setItem(DB_KEY, JSON.stringify(db));
+// ============================================================
+// LISTENER TEMPO REALE (aggiornamenti automatici)
+// ============================================================
+function avviaListenerTempoReale() {
+  // Ascolta cambiamenti su ogni collezione
+  const listen = (collection, onUpdate) => {
+    return dbFirestore.collection(collection).onSnapshot(
+      snapshot => {
+        const data = snapshot.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+        onUpdate(data);
+        salvaCacheLocale();
+        renderCurrent();
+      },
+      err => {
+        console.error('Errore listener:', err);
+        setSyncStatus('error', '❌ Offline');
+      }
+    );
+  };
+  
+  unsubscribers.push(listen('clienti', data => db.clienti = data));
+  unsubscribers.push(listen('auto', data => db.auto = data));
+  unsubscribers.push(listen('interventi', data => db.interventi = data));
+  unsubscribers.push(listen('preventivi', data => db.preventivi = data));
+  
+  // Ascolta anche il nextId
+  unsubscribers.push(
+    dbFirestore.collection('config').doc('ids').onSnapshot(doc => {
+      if (doc.exists) db.nextId = doc.data().nextId || 1;
+    })
+  );
+}
+
+// ============================================================
+// SALVATAGGIO SU FIREBASE
+// ============================================================
+async function saveDB() {
+  setSyncStatus('syncing', '🔄 Salvataggio...');
+  salvaCacheLocale();
   updateHeader();
+  // Il rendering viene fatto dal listener in tempo reale
+  setSyncStatus('online', '🟢 Online');
 }
 
-function newId() { return db.nextId++; }
+function salvaCacheLocale() {
+  try {
+    localStorage.setItem('officina_db_cache', JSON.stringify(db));
+  } catch(e) {}
+}
 
-// ========== UTIL ==========
+async function firestoreSet(collection, id, data) {
+  try {
+    await dbFirestore.collection(collection).doc(String(id)).set(data);
+  } catch (err) {
+    console.error('Errore salvataggio:', err);
+    setSyncStatus('error', '❌ Errore salvataggio');
+  }
+}
+
+async function firestoreDelete(collection, id) {
+  try {
+    await dbFirestore.collection(collection).doc(String(id)).delete();
+  } catch (err) {
+    console.error('Errore eliminazione:', err);
+  }
+}
+
+async function incrementaNextId() {
+  const newId = db.nextId;
+  db.nextId++;
+  try {
+    await dbFirestore.collection('config').doc('ids').set({ nextId: db.nextId });
+  } catch (err) {
+    console.error('Errore nextId:', err);
+  }
+  return newId;
+}
+
+function newId() {
+  const id = db.nextId;
+  db.nextId++;
+  // Aggiorna nextId su Firebase in background
+  dbFirestore.collection('config').doc('ids').set({ nextId: db.nextId }).catch(() => {});
+  return id;
+}
+
+function setSyncStatus(type, text) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.className = 'sync-status ' + type;
+  el.textContent = text;
+}
+
+// Rileva stato online/offline
+window.addEventListener('online', () => {
+  setSyncStatus('online', '🟢 Online');
+  caricaDatiDaCloud();
+});
+window.addEventListener('offline', () => {
+  setSyncStatus('offline', '⚫ Offline');
+});
+
+// ============================================================
+// UTIL
+// ============================================================
 function fmtDate(d) {
   if (!d) return '-';
   const dt = new Date(d);
@@ -99,7 +295,9 @@ function daysUntil(dateStr) {
   return Math.round((d - now) / 86400000);
 }
 
-// ========== NAVIGAZIONE ==========
+// ============================================================
+// NAVIGAZIONE
+// ============================================================
 const tabs = document.querySelectorAll('.tab');
 let currentTab = 'dashboard';
 let currentClienteId = null;
@@ -125,7 +323,6 @@ function updateHeader() {
     db.clienti.length + ' clienti • ' + db.auto.length + ' auto';
 }
 
-// ========== MODAL ==========
 function openModal(html) {
   document.getElementById('modalContent').innerHTML = html;
   document.getElementById('modal').classList.add('show');
@@ -139,7 +336,9 @@ document.getElementById('modal').addEventListener('click', e => {
   if (e.target.id === 'modal') closeModal();
 });
 
-// ========== CLIENTI CRUD ==========
+// ============================================================
+// CLIENTI CRUD
+// ============================================================
 function openClienteModal(id = null) {
   const c = id ? db.clienti.find(x => x.id === id) : { nome:'', cognome:'', telefono:'', email:'', indirizzo:'', note:'' };
   openModal(`
@@ -164,7 +363,7 @@ function openClienteModal(id = null) {
   `);
 }
 
-function saveCliente(id) {
+async function saveCliente(id) {
   const data = {
     nome: document.getElementById('f_nome').value.trim(),
     cognome: document.getElementById('f_cognome').value.trim(),
@@ -174,10 +373,15 @@ function saveCliente(id) {
     note: document.getElementById('f_note').value.trim()
   };
   if (!data.nome && !data.cognome) { alert('Inserisci almeno nome o cognome'); return; }
+  
   if (id) {
     Object.assign(db.clienti.find(x => x.id === id), data);
+    await firestoreSet('clienti', id, data);
   } else {
-    db.clienti.push({ id: newId(), ...data, createdAt: new Date().toISOString() });
+    const newIdVal = newId();
+    const newCliente = { id: newIdVal, ...data, createdAt: new Date().toISOString() };
+    db.clienti.push(newCliente);
+    await firestoreSet('clienti', newIdVal, data);
   }
   saveDB();
   closeModal();
@@ -185,13 +389,30 @@ function saveCliente(id) {
   else renderCurrent();
 }
 
-function deleteCliente(id) {
-  if (!confirm('Eliminare il cliente e TUTTI i dati collegati (auto, interventi, preventivi)?')) return;
+async function deleteCliente(id) {
+  if (!confirm('Eliminare il cliente e TUTTI i dati collegati?')) return;
   const autoIds = db.auto.filter(a => a.clienteId === id).map(a => a.id);
+  
+  // Elimina interventi
+  for (const int of db.interventi.filter(i => autoIds.includes(i.autoId))) {
+    await firestoreDelete('interventi', int.id);
+  }
+  // Elimina preventivi
+  for (const p of db.preventivi.filter(p => p.clienteId === id)) {
+    await firestoreDelete('preventivi', p.id);
+  }
+  // Elimina auto
+  for (const a of db.auto.filter(a => a.clienteId === id)) {
+    await firestoreDelete('auto', a.id);
+  }
+  // Elimina cliente
+  await firestoreDelete('clienti', id);
+  
   db.interventi = db.interventi.filter(i => !autoIds.includes(i.autoId));
   db.preventivi = db.preventivi.filter(p => p.clienteId !== id);
   db.auto = db.auto.filter(a => a.clienteId !== id);
   db.clienti = db.clienti.filter(c => c.id !== id);
+  
   saveDB();
   closeModal();
   if (currentClienteId === id) {
@@ -202,9 +423,11 @@ function deleteCliente(id) {
   }
 }
 
-// ========== AUTO CRUD ==========
+// ============================================================
+// AUTO CRUD
+// ============================================================
 function openAutoModal(id = null, prefillClienteId = null) {
-  const a = id ? db.auto.find(x => x.id === id) : { marca:'', modello:'', targa:'', anno:'', km:'', clienteId: prefillClienteId || currentClienteId || '', note:'', telaio:'' };
+  const a = id ? db.auto.find(x => x.id === id) : { marca:'', modello:'', targa:'', telaio:'', anno:'', km:'', clienteId: prefillClienteId || currentClienteId || '', note:'' };
   const opts = db.clienti.map(c => `<option value="${c.id}" ${c.id == a.clienteId ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuova'} Auto</h2>
@@ -219,7 +442,7 @@ function openAutoModal(id = null, prefillClienteId = null) {
     <input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">
     <label>Targa</label>
     <input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">
-    <label>Telaio (VIN) - opzionale</label>
+    <label>Telaio (VIN)</label>
     <input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">
     <label>Anno</label>
     <input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">
@@ -235,7 +458,7 @@ function openAutoModal(id = null, prefillClienteId = null) {
   `);
 }
 
-function saveAuto(id) {
+async function saveAuto(id) {
   const data = {
     clienteId: parseInt(document.getElementById('f_clienteId').value),
     marca: document.getElementById('f_marca').value.trim(),
@@ -247,10 +470,14 @@ function saveAuto(id) {
     note: document.getElementById('f_note').value.trim()
   };
   if (!data.clienteId) { alert('Seleziona un cliente'); return; }
+  
   if (id) {
     Object.assign(db.auto.find(x => x.id === id), data);
+    await firestoreSet('auto', id, data);
   } else {
-    db.auto.push({ id: newId(), ...data, createdAt: new Date().toISOString() });
+    const newIdVal = newId();
+    db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+    await firestoreSet('auto', newIdVal, data);
   }
   saveDB();
   closeModal();
@@ -258,9 +485,13 @@ function saveAuto(id) {
   else renderCurrent();
 }
 
-function deleteAuto(id) {
+async function deleteAuto(id) {
   if (!confirm('Eliminare l\'auto e tutti i suoi interventi?')) return;
   const auto = db.auto.find(a => a.id === id);
+  for (const i of db.interventi.filter(i => i.autoId === id)) {
+    await firestoreDelete('interventi', i.id);
+  }
+  await firestoreDelete('auto', id);
   db.interventi = db.interventi.filter(i => i.autoId !== id);
   db.auto = db.auto.filter(a => a.id !== id);
   saveDB();
@@ -269,64 +500,51 @@ function deleteAuto(id) {
   else renderCurrent();
 }
 
-// ========== INTERVENTI CRUD ==========
+// ============================================================
+// INTERVENTI CRUD
+// ============================================================
 function openInterventoModal(id = null, prefillAutoId = null) {
   const i = id ? db.interventi.find(x => x.id === id) : { 
-    autoId: prefillAutoId || '', 
-    tipo:'manutenzione', 
-    data: new Date().toISOString().slice(0,10), 
-    km:'', 
-    descrizione:'', 
-    pezzi:'', 
-    costoManodopera:'',
-    costoPezzi:'',
-    prossimoData:'', 
-    prossimoKm:'', 
-    note:'' 
+    autoId: prefillAutoId || '', tipo:'manutenzione', 
+    data: new Date().toISOString().slice(0,10), km:'', 
+    descrizione:'', pezzi:'', costoManodopera:'', costoPezzi:'',
+    prossimoData:'', prossimoKm:'', note:'' 
   };
-  
-  // Filtra auto: se sono dentro una scheda cliente, mostra solo le sue auto
   let autoList = db.auto;
   if (currentClienteId) autoList = autoList.filter(a => a.clienteId === currentClienteId);
-  
   const opts = autoList.map(a => {
     const c = db.clienti.find(x => x.id === a.clienteId);
     const cn = c ? ` (${c.nome} ${c.cognome})` : '';
     return `<option value="${a.id}" ${a.id == i.autoId ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}${cn}</option>`;
   }).join('');
-  
   const costoTot = (Number(i.costoManodopera) || 0) + (Number(i.costoPezzi) || 0);
-  
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Intervento</h2>
     <label>Auto *</label>
-    <select id="f_autoId">
-      <option value="">-- Seleziona --</option>
-      ${opts}
-    </select>
+    <select id="f_autoId"><option value="">-- Seleziona --</option>${opts}</select>
     <label>Tipo</label>
     <select id="f_tipo">
-      <option value="manutenzione" ${i.tipo==='manutenzione'?'selected':''}>🛠️ Manutenzione (tagliando)</option>
+      <option value="manutenzione" ${i.tipo==='manutenzione'?'selected':''}>🛠️ Manutenzione</option>
       <option value="riparazione" ${i.tipo==='riparazione'?'selected':''}>🔧 Riparazione</option>
-      <option value="diagnosi" ${i.tipo==='diagnosi'?'selected':''}>🔍 Diagnosi / Controllo</option>
+      <option value="diagnosi" ${i.tipo==='diagnosi'?'selected':''}>🔍 Diagnosi</option>
       <option value="revisione" ${i.tipo==='revisione'?'selected':''}>📋 Revisione</option>
       <option value="altro" ${i.tipo==='altro'?'selected':''}>📦 Altro</option>
     </select>
     <label>Data</label>
     <input id="f_data" type="date" value="${i.data}">
-    <label>Chilometri al momento dell'intervento</label>
+    <label>Chilometri</label>
     <input id="f_km" type="number" value="${escapeHtml(i.km)}">
     <label>Descrizione lavoro</label>
-    <textarea id="f_descrizione" rows="3" placeholder="Cosa è stato fatto...">${escapeHtml(i.descrizione)}</textarea>
-    <label>Pezzi ricambi usati</label>
-    <textarea id="f_pezzi" rows="2" placeholder="Filtro olio, olio 5W30...">${escapeHtml(i.pezzi)}</textarea>
+    <textarea id="f_descrizione" rows="3">${escapeHtml(i.descrizione)}</textarea>
+    <label>Pezzi ricambi</label>
+    <textarea id="f_pezzi" rows="2">${escapeHtml(i.pezzi)}</textarea>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
       <div>
-        <label>Costo manodopera (€)</label>
+        <label>Manodopera (€)</label>
         <input id="f_costoManodopera" type="number" step="0.01" value="${escapeHtml(i.costoManodopera)}" oninput="aggiornaTotale()">
       </div>
       <div>
-        <label>Costo pezzi (€)</label>
+        <label>Pezzi (€)</label>
         <input id="f_costoPezzi" type="number" step="0.01" value="${escapeHtml(i.costoPezzi)}" oninput="aggiornaTotale()">
       </div>
     </div>
@@ -334,14 +552,8 @@ function openInterventoModal(id = null, prefillAutoId = null) {
       <strong>Totale: <span id="totalePreview">${fmtEuro(costoTot)}</span></strong>
     </div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
-      <div>
-        <label>Prossimo - Data</label>
-        <input id="f_prossimoData" type="date" value="${i.prossimoData}">
-      </div>
-      <div>
-        <label>Prossimo - Km</label>
-        <input id="f_prossimoKm" type="number" value="${escapeHtml(i.prossimoKm)}">
-      </div>
+      <div><label>Prossimo - Data</label><input id="f_prossimoData" type="date" value="${i.prossimoData}"></div>
+      <div><label>Prossimo - Km</label><input id="f_prossimoKm" type="number" value="${escapeHtml(i.prossimoKm)}"></div>
     </div>
     <label>Note</label>
     <textarea id="f_note" rows="2">${escapeHtml(i.note)}</textarea>
@@ -359,7 +571,7 @@ function aggiornaTotale() {
   document.getElementById('totalePreview').textContent = fmtEuro(m + p);
 }
 
-function saveIntervento(id) {
+async function saveIntervento(id) {
   const data = {
     autoId: parseInt(document.getElementById('f_autoId').value),
     tipo: document.getElementById('f_tipo').value,
@@ -375,29 +587,35 @@ function saveIntervento(id) {
     note: document.getElementById('f_note').value.trim()
   };
   if (!data.autoId) { alert('Seleziona un\'auto'); return; }
+  
   if (id) {
     Object.assign(db.interventi.find(x => x.id === id), data);
+    await firestoreSet('interventi', id, data);
   } else {
-    db.interventi.push({ id: newId(), ...data, createdAt: new Date().toISOString() });
+    const newIdVal = newId();
+    db.interventi.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+    await firestoreSet('interventi', newIdVal, data);
   }
-  // aggiorna km auto
+  
   if (data.km) {
     const auto = db.auto.find(a => a.id === data.autoId);
     if (auto && (!auto.km || Number(data.km) > Number(auto.km))) {
       auto.km = data.km;
+      await firestoreSet('auto', auto.id, { km: data.km });
     }
   }
+  
   saveDB();
   closeModal();
-  // torna alla scheda cliente se pertinente
   const auto = db.auto.find(a => a.id === data.autoId);
   if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
   else renderCurrent();
 }
 
-function deleteIntervento(id) {
+async function deleteIntervento(id) {
   if (!confirm('Eliminare l\'intervento?')) return;
   const int = db.interventi.find(i => i.id === id);
+  await firestoreDelete('interventi', id);
   db.interventi = db.interventi.filter(i => i.id !== id);
   saveDB();
   closeModal();
@@ -408,58 +626,44 @@ function deleteIntervento(id) {
   }
 }
 
-// ========== PREVENTIVI CRUD ==========
+// ============================================================
+// PREVENTIVI CRUD
+// ============================================================
 function openPreventivoModal(id = null) {
   const p = id ? db.preventivi.find(x => x.id === id) : { 
-    clienteId: currentClienteId || '', 
-    autoId: '', 
+    clienteId: currentClienteId || '', autoId: '', 
     data: new Date().toISOString().slice(0,10),
     voci: [{ descrizione: '', quantita: 1, prezzo: 0 }],
-    note: '',
-    validoFino: '',
-    stato: 'bozza'
+    note: '', validoFino: '', stato: 'bozza'
   };
-  
   const clientiOpts = db.clienti.map(c => 
     `<option value="${c.id}" ${c.id == p.clienteId ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`
   ).join('');
-  
-  // Auto del cliente selezionato
   let autoList = p.clienteId ? db.auto.filter(a => a.clienteId == p.clienteId) : db.auto;
-  const autoOpts = autoList.map(a => {
-    return `<option value="${a.id}" ${a.id == p.autoId ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`;
-  }).join('');
-
+  const autoOpts = autoList.map(a => 
+    `<option value="${a.id}" ${a.id == p.autoId ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`
+  ).join('');
   const vociHtml = p.voci.map((v, idx) => `
-    <div class="voce-row" data-idx="${idx}">
+    <div class="voce-row">
       <input placeholder="Descrizione" value="${escapeHtml(v.descrizione)}" onchange="updateVoce(${idx}, 'descrizione', this.value)">
       <input type="number" placeholder="Qtà" value="${v.quantita}" style="width:70px" onchange="updateVoce(${idx}, 'quantita', this.value)">
       <input type="number" step="0.01" placeholder="€" value="${v.prezzo}" style="width:90px" onchange="updateVoce(${idx}, 'prezzo', this.value)">
       <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})">×</button>
     </div>
   `).join('');
-
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Preventivo</h2>
     <label>Cliente *</label>
     <select id="f_clienteId" onchange="updatePrevField('clienteId', this.value); refreshAutoPrev()">
-      <option value="">-- Seleziona --</option>
-      ${clientiOpts}
+      <option value="">-- Seleziona --</option>${clientiOpts}
     </select>
     <label>Auto</label>
     <select id="f_autoId" onchange="updatePrevField('autoId', this.value)">
-      <option value="">-- Nessuna --</option>
-      ${autoOpts}
+      <option value="">-- Nessuna --</option>${autoOpts}
     </select>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
-      <div>
-        <label>Data</label>
-        <input type="date" id="f_data" value="${p.data}" onchange="updatePrevField('data', this.value)">
-      </div>
-      <div>
-        <label>Valido fino al</label>
-        <input type="date" id="f_validoFino" value="${p.validoFino}" onchange="updatePrevField('validoFino', this.value)">
-      </div>
+      <div><label>Data</label><input type="date" id="f_data" value="${p.data}" onchange="updatePrevField('data', this.value)"></div>
+      <div><label>Valido fino al</label><input type="date" id="f_validoFino" value="${p.validoFino}" onchange="updatePrevField('validoFino', this.value)"></div>
     </div>
     <label>Stato</label>
     <select id="f_stato" onchange="updatePrevField('stato', this.value)">
@@ -468,14 +672,11 @@ function openPreventivoModal(id = null) {
       <option value="accettato" ${p.stato==='accettato'?'selected':''}>✅ Accettato</option>
       <option value="rifiutato" ${p.stato==='rifiutato'?'selected':''}>❌ Rifiutato</option>
     </select>
-    
-    <label style="margin-top:10px">Voci del preventivo</label>
+    <label style="margin-top:10px">Voci</label>
     <div id="vociContainer">${vociHtml}</div>
     <button class="btn btn-secondary btn-sm" onclick="addVoce()">+ Aggiungi voce</button>
-    
     <label style="margin-top:16px">Note</label>
     <textarea id="f_note" rows="2" onchange="updatePrevField('note', this.value)">${escapeHtml(p.note)}</textarea>
-    
     <div class="btn-row" style="margin-top:16px">
       <button class="btn btn-primary" onclick="savePreventivo(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-success" onclick="generatePDF(${id})">📄 PDF</button>` : ''}
@@ -483,7 +684,6 @@ function openPreventivoModal(id = null) {
       <button class="btn btn-secondary" onclick="closeModal()">Annulla</button>
     </div>
   `);
-  
   window.currentPreventivo = JSON.parse(JSON.stringify(p));
 }
 
@@ -496,33 +696,31 @@ function refreshAutoPrev() {
     autoList.map(a => `<option value="${a.id}" ${a.id == currentVal ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
 }
 
-function updatePrevField(field, value) {
-  window.currentPreventivo[field] = value;
-}
-
+function updatePrevField(field, value) { window.currentPreventivo[field] = value; }
 function updateVoce(idx, field, value) {
   window.currentPreventivo.voci[idx][field] = field === 'descrizione' ? value : Number(value);
 }
-
 function addVoce() {
   window.currentPreventivo.voci.push({ descrizione: '', quantita: 1, prezzo: 0 });
   openPreventivoModal(window.currentPreventivo.id || null);
 }
-
 function removeVoce(idx) {
   window.currentPreventivo.voci.splice(idx, 1);
   openPreventivoModal(window.currentPreventivo.id || null);
 }
 
-function savePreventivo(id) {
+async function savePreventivo(id) {
   const p = window.currentPreventivo;
   if (!p.clienteId) { alert('Seleziona un cliente'); return; }
   if (!p.voci.length || p.voci.every(v => !v.descrizione)) { alert('Aggiungi almeno una voce'); return; }
   
   if (id) {
     Object.assign(db.preventivi.find(x => x.id === id), p);
+    await firestoreSet('preventivi', id, p);
   } else {
-    db.preventivi.push({ id: newId(), ...p, createdAt: new Date().toISOString() });
+    const newIdVal = newId();
+    db.preventivi.push({ id: newIdVal, ...p, createdAt: new Date().toISOString() });
+    await firestoreSet('preventivi', newIdVal, p);
   }
   saveDB();
   closeModal();
@@ -530,9 +728,10 @@ function savePreventivo(id) {
   else renderCurrent();
 }
 
-function deletePreventivo(id) {
+async function deletePreventivo(id) {
   if (!confirm('Eliminare il preventivo?')) return;
   const p = db.preventivi.find(x => x.id === id);
+  await firestoreDelete('preventivi', id);
   db.preventivi = db.preventivi.filter(x => x.id !== id);
   saveDB();
   closeModal();
@@ -546,28 +745,21 @@ function generatePDF(id) {
   const cliente = db.clienti.find(c => c.id == p.clienteId);
   const auto = p.autoId ? db.auto.find(a => a.id == p.autoId) : null;
   const totale = p.voci.reduce((sum, v) => sum + (v.quantita * v.prezzo), 0);
-  
   const html = `
     <div class="preventivo-doc">
       <h1>PREVENTIVO N. ${String(p.id).padStart(4, '0')}</h1>
-      <p><strong>Data:</strong> ${fmtDate(p.data)}${p.validoFino ? ` &nbsp;|&nbsp; <strong>Valido fino al:</strong> ${fmtDate(p.validoFino)}` : ''}</p>
-      
+      <p><strong>Data:</strong> ${fmtDate(p.data)}${p.validoFino ? ` | <strong>Valido fino al:</strong> ${fmtDate(p.validoFino)}` : ''}</p>
       <h3 style="margin-top:20px">Cliente</h3>
       <p><strong>${escapeHtml(cliente.nome + ' ' + cliente.cognome)}</strong></p>
       ${cliente.telefono ? `<p>Tel: ${escapeHtml(cliente.telefono)}</p>` : ''}
       ${cliente.email ? `<p>Email: ${escapeHtml(cliente.email)}</p>` : ''}
       ${cliente.indirizzo ? `<p>${escapeHtml(cliente.indirizzo)}</p>` : ''}
-      
       ${auto ? `
         <h3 style="margin-top:20px">Veicolo</h3>
         <p>${escapeHtml(auto.marca + ' ' + auto.modello)} - Targa: <strong>${escapeHtml(auto.targa)}</strong></p>
-        ${auto.anno ? `<p>Anno: ${escapeHtml(auto.anno)}</p>` : ''}
       ` : ''}
-      
       <table>
-        <thead>
-          <tr><th>Descrizione</th><th style="width:60px">Qtà</th><th style="width:100px">Prezzo unit.</th><th style="width:100px">Totale</th></tr>
-        </thead>
+        <thead><tr><th>Descrizione</th><th>Qtà</th><th>Prezzo</th><th>Totale</th></tr></thead>
         <tbody>
           ${p.voci.map(v => `
             <tr>
@@ -579,17 +771,13 @@ function generatePDF(id) {
           `).join('')}
         </tbody>
       </table>
-      
       <p class="total" style="text-align:right; margin-top:20px">TOTALE: ${fmtEuro(totale)}</p>
-      
       ${p.note ? `<p style="margin-top:20px"><strong>Note:</strong><br>${escapeHtml(p.note).replace(/\n/g,'<br>')}</p>` : ''}
     </div>
   `;
-  
   const template = document.getElementById('preventivoTemplate');
   template.innerHTML = html;
   template.style.display = 'block';
-  
   setTimeout(() => {
     html2canvas(template.querySelector('.preventivo-doc'), { scale: 2, useCORS: true, logging: false }).then(canvas => {
       const imgData = canvas.toDataURL('image/png');
@@ -605,36 +793,39 @@ function generatePDF(id) {
   }, 100);
 }
 
-// ========== RENDER PRINCIPALE ==========
+// ============================================================
+// RENDER
+// ============================================================
 function renderCurrent() {
   if (currentTab === 'dashboard') renderDashboard();
-  else if (currentTab === 'clienti') renderListaClienti();
+  else if (currentTab === 'clienti') {
+    if (currentClienteId) renderSchedaCliente();
+    else renderListaClienti();
+  }
   else if (currentTab === 'ricambi') renderRicambi();
   else if (currentTab === 'impostazioni') renderImpostazioni();
 }
 
 function switchToTab(tabName) {
   currentTab = tabName;
-  tabs.forEach(x => {
-    x.classList.toggle('active', x.dataset.tab === tabName);
-  });
+  currentClienteId = null;
+  tabs.forEach(x => x.classList.toggle('active', x.dataset.tab === tabName));
   showView('view-' + tabName);
   renderCurrent();
 }
 
-// ========== DASHBOARD ==========
 function renderDashboard() {
   const v = document.getElementById('view-dashboard');
   const totClienti = db.clienti.length;
   const totAuto = db.auto.length;
   const totInterventi = db.interventi.length;
   const incassoTot = db.interventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
-
   const prossimi = [];
   db.interventi.forEach(i => {
     const auto = db.auto.find(a => a.id === i.autoId);
     if (!auto) return;
     const cliente = db.clienti.find(c => c.id === auto.clienteId);
+    if (!cliente) return;
     if (i.prossimoData) {
       const d = daysUntil(i.prossimoData);
       if (d !== null && d <= 30) prossimi.push({ ...i, auto, cliente, alertType: 'data', daysLeft: d });
@@ -644,9 +835,7 @@ function renderDashboard() {
       if (diff <= 1000) prossimi.push({ ...i, auto, cliente, alertType: 'km', kmLeft: diff });
     }
   });
-
   const ultimi = [...db.interventi].sort((a,b) => (b.data||'').localeCompare(a.data||'')).slice(0, 5);
-
   v.innerHTML = `
     <div class="stats">
       <div class="stat"><div class="num">${totClienti}</div><div class="lbl">Clienti</div></div>
@@ -654,7 +843,6 @@ function renderDashboard() {
       <div class="stat"><div class="num">${totInterventi}</div><div class="lbl">Interventi</div></div>
       <div class="stat"><div class="num">${fmtEuro(incassoTot)}</div><div class="lbl">Incassi totali</div></div>
     </div>
-
     ${prossimi.length ? `
       <div class="card">
         <h3>⚠️ Prossimi interventi (${prossimi.length})</h3>
@@ -676,7 +864,6 @@ function renderDashboard() {
         }).join('')}
       </div>
     ` : ''}
-
     <div class="card">
       <h3>🕐 Ultimi interventi</h3>
       ${ultimi.length ? ultimi.map(i => {
@@ -694,21 +881,16 @@ function renderDashboard() {
             </div>
           </div>
         `;
-      }).join('') : '<div class="empty"><div class="empty-icon">📭</div>Nessun intervento registrato</div>'}
+      }).join('') : '<div class="empty"><div class="empty-icon">📭</div>Nessun intervento</div>'}
     </div>
   `;
 }
 
-// ========== LISTA CLIENTI (con ricerca globale) ==========
 function renderListaClienti() {
   const v = document.getElementById('view-clienti');
   const search = (window.searchClienti || '').toLowerCase().trim();
-  
-  // Ricerca globale: cerca in clienti, auto (targa/telaio), interventi
   let risultati = [];
-  
   if (!search) {
-    // Mostra tutti i clienti ordinati
     risultati = [...db.clienti].sort((a,b) => (a.cognome + a.nome).localeCompare(b.cognome + b.nome));
     v.innerHTML = `
       <input class="search" placeholder="🔍 Cerca cliente, targa, telaio..." value="" oninput="window.searchClienti=this.value; renderListaClienti()">
@@ -717,33 +899,25 @@ function renderListaClienti() {
     `;
     return;
   }
-  
-  // Cerca in clienti
   db.clienti.forEach(c => {
     const txt = (c.nome + ' ' + c.cognome + ' ' + c.telefono + ' ' + c.email).toLowerCase();
     if (txt.includes(search)) risultati.push({ type: 'cliente', data: c });
   });
-  
-  // Cerca in auto (targa/telaio/marca/modello)
   db.auto.forEach(a => {
     const c = db.clienti.find(x => x.id === a.clienteId);
     if (!c) return;
     const txt = (a.marca + ' ' + a.modello + ' ' + a.targa + ' ' + a.telaio + ' ' + c.nome + ' ' + c.cognome).toLowerCase();
-    if (txt.includes(search)) {
-      // evita duplicati se cliente già trovato
-      if (!risultati.some(r => r.type === 'cliente' && r.data.id === c.id)) {
-        risultati.push({ type: 'cliente', data: c, matchInfo: `trovato via auto: ${a.targa}` });
-      }
+    if (txt.includes(search) && !risultati.some(r => r.type === 'cliente' && r.data.id === c.id)) {
+      risultati.push({ type: 'cliente', data: c, matchInfo: `trovato via auto: ${a.targa}` });
     }
   });
-  
   v.innerHTML = `
-    <input class="search" placeholder="🔍 Cerca cliente, targa, telaio..." value="${escapeHtml(search)}" oninput="window.searchClienti=this.value; renderListaClienti()" autofocus>
+    <input class="search" placeholder="🔍 Cerca cliente, targa, telaio..." value="${escapeHtml(search)}" oninput="window.searchClienti=this.value; renderListaClienti()">
     <button class="btn btn-primary btn-block" onclick="openClienteModal()" style="margin-bottom:16px">+ Nuovo cliente</button>
     ${risultati.length ? `
       <div style="font-size:0.85rem; color:var(--muted); margin-bottom:10px">${risultati.length} risultat${risultati.length === 1 ? 'o' : 'i'}</div>
       ${risultati.map(r => renderCardCliente(r.data, r.matchInfo)).join('')}
-    ` : '<div class="empty"><div class="empty-icon">🔍</div>Nessun risultato per "' + escapeHtml(search) + '"</div>'}
+    ` : '<div class="empty"><div class="empty-icon">🔍</div>Nessun risultato</div>'}
   `;
 }
 
@@ -755,7 +929,6 @@ function renderCardCliente(c, matchInfo = '') {
   }).length;
   const prevCount = db.preventivi.filter(p => p.clienteId === c.id).length;
   const ultimaAuto = db.auto.filter(a => a.clienteId === c.id).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
-  
   return `
     <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${c.id})">
       <div class="item-head">
@@ -775,7 +948,6 @@ function renderCardCliente(c, matchInfo = '') {
   `;
 }
 
-// ========== SCHEDA CLIENTE COMPLETA ==========
 function apriSchedaCliente(id) {
   currentClienteId = id;
   currentSubTab = 'auto';
@@ -785,7 +957,8 @@ function apriSchedaCliente(id) {
 
 function tornaAListaClienti() {
   currentClienteId = null;
-  switchToTab('clienti');
+  showView('view-clienti');
+  renderListaClienti();
 }
 
 function setSubTab(tab) {
@@ -797,28 +970,20 @@ function renderSchedaCliente() {
   const v = document.getElementById('view-scheda-cliente');
   const c = db.clienti.find(x => x.id === currentClienteId);
   if (!c) { tornaAListaClienti(); return; }
-  
   const autoList = db.auto.filter(a => a.clienteId === c.id);
   const tuttiInterventi = [];
   autoList.forEach(a => {
-    db.interventi.filter(i => i.autoId === a.id).forEach(i => {
-      tuttiInterventi.push({ ...i, auto: a });
-    });
+    db.interventi.filter(i => i.autoId === a.id).forEach(i => tuttiInterventi.push({ ...i, auto: a }));
   });
   tuttiInterventi.sort((a,b) => (b.data||'').localeCompare(a.data||''));
-  
   const preventiviList = db.preventivi.filter(p => p.clienteId === c.id).sort((a,b) => (b.data||'').localeCompare(a.data||''));
-  
   const incassoTot = tuttiInterventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
-  
   let contentHtml = '';
   if (currentSubTab === 'auto') contentHtml = renderSubTabAuto(c, autoList);
   else if (currentSubTab === 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
   else if (currentSubTab === 'preventivi') contentHtml = renderSubTabPreventivi(c, preventiviList);
-  
   v.innerHTML = `
     <button class="back-btn" onclick="tornaAListaClienti()">← Torna alla lista</button>
-    
     <div class="scheda-header">
       <h2>${escapeHtml(c.nome + ' ' + c.cognome)}</h2>
       ${c.telefono ? `<div class="sub-info">📞 ${escapeHtml(c.telefono)}</div>` : ''}
@@ -831,37 +996,27 @@ function renderSchedaCliente() {
         <button class="btn" onclick="openPreventivoModal()">📄 Nuovo prev.</button>
       </div>
     </div>
-    
     <div class="stats">
       <div class="stat"><div class="num">${autoList.length}</div><div class="lbl">Auto</div></div>
       <div class="stat"><div class="num">${tuttiInterventi.length}</div><div class="lbl">Interventi</div></div>
       <div class="stat"><div class="num">${preventiviList.length}</div><div class="lbl">Preventivi</div></div>
       <div class="stat"><div class="num">${fmtEuro(incassoTot)}</div><div class="lbl">Totale speso</div></div>
     </div>
-    
     ${c.note ? `<div class="card"><h3>📝 Note</h3><p style="font-size:0.9rem">${escapeHtml(c.note)}</p></div>` : ''}
-    
     <div class="sub-tabs">
       <div class="sub-tab ${currentSubTab==='auto'?'active':''}" onclick="setSubTab('auto')">🚗 Auto (${autoList.length})</div>
       <div class="sub-tab ${currentSubTab==='storico'?'active':''}" onclick="setSubTab('storico')">🕐 Storico (${tuttiInterventi.length})</div>
       <div class="sub-tab ${currentSubTab==='preventivi'?'active':''}" onclick="setSubTab('preventivi')">📄 Preventivi (${preventiviList.length})</div>
     </div>
-    
     ${contentHtml}
   `;
 }
 
 function renderSubTabAuto(c, autoList) {
   if (!autoList.length) {
-    return `
-      <div class="empty">
-        <div class="empty-icon">🚗</div>
-        <p>Nessuna auto registrata</p>
-        <button class="btn btn-primary" onclick="openAutoModal(null, ${c.id})" style="margin-top:10px">+ Aggiungi prima auto</button>
-      </div>
-    `;
+    return `<div class="empty"><div class="empty-icon">🚗</div><p>Nessuna auto</p>
+      <button class="btn btn-primary" onclick="openAutoModal(null, ${c.id})" style="margin-top:10px">+ Aggiungi prima auto</button></div>`;
   }
-  
   return `
     <button class="btn btn-primary btn-block" onclick="openAutoModal(null, ${c.id})" style="margin-bottom:12px">+ Aggiungi auto</button>
     ${autoList.map(a => {
@@ -904,22 +1059,15 @@ function renderSubTabAuto(c, autoList) {
 function renderSubTabStorico(c, interventi) {
   const autoList = db.auto.filter(a => a.clienteId === c.id);
   const filterAuto = window.filterAutoCliente || 'tutti';
-  
   let filtered = interventi;
-  if (filterAuto !== 'tutti') {
-    filtered = interventi.filter(i => i.auto.id == filterAuto);
-  }
-  
+  if (filterAuto !== 'tutti') filtered = interventi.filter(i => i.auto.id == filterAuto);
   return `
     ${autoList.length > 1 ? `
       <div class="toolbar">
-        <button class="btn btn-sm ${filterAuto==='tutti'?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente='tutti'; renderSchedaCliente()">Tutte le auto</button>
-        ${autoList.map(a => `
-          <button class="btn btn-sm ${filterAuto==a.id?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente=${a.id}; renderSchedaCliente()">${escapeHtml(a.targa)}</button>
-        `).join('')}
+        <button class="btn btn-sm ${filterAuto==='tutti'?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente='tutti'; renderSchedaCliente()">Tutte</button>
+        ${autoList.map(a => `<button class="btn btn-sm ${filterAuto==a.id?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente=${a.id}; renderSchedaCliente()">${escapeHtml(a.targa)}</button>`).join('')}
       </div>
     ` : ''}
-    
     ${filtered.length ? `
       <div class="timeline">
         ${filtered.map(i => `
@@ -940,18 +1088,11 @@ function renderSubTabStorico(c, interventi) {
 
 function renderSubTabPreventivi(c, preventivi) {
   if (!preventivi.length) {
-    return `
-      <div class="empty">
-        <div class="empty-icon">📄</div>
-        <p>Nessun preventivo</p>
-        <button class="btn btn-primary" onclick="openPreventivoModal()" style="margin-top:10px">+ Crea preventivo</button>
-      </div>
-    `;
+    return `<div class="empty"><div class="empty-icon">📄</div><p>Nessun preventivo</p>
+      <button class="btn btn-primary" onclick="openPreventivoModal()" style="margin-top:10px">+ Crea preventivo</button></div>`;
   }
-  
   const statoLabel = { bozza: '📝 Bozza', inviato: '📤 Inviato', accettato: '✅ Accettato', rifiutato: '❌ Rifiutato' };
   const statoColor = { bozza: '#6b7280', inviato: '#1e40af', accettato: '#16a34a', rifiutato: '#dc2626' };
-  
   return `
     <button class="btn btn-primary btn-block" onclick="openPreventivoModal()" style="margin-bottom:12px">+ Nuovo preventivo</button>
     ${preventivi.map(p => {
@@ -990,7 +1131,7 @@ function showDettaglioIntervento(id) {
     <div class="detail-row"><span>🔩 Pezzi</span><span>${fmtEuro(i.costoPezzi)}</span></div>
     <div class="detail-row"><span><b>Totale</b></span><span><b>${fmtEuro(i.costo)}</b></span></div>
     ${i.descrizione ? `<div class="detail-row"><span>📝 Lavoro</span><span>${escapeHtml(i.descrizione)}</span></div>` : ''}
-    ${i.pezzi ? `<div class="detail-row"><span>🔩 Pezzi usati</span><span>${escapeHtml(i.pezzi)}</span></div>` : ''}
+    ${i.pezzi ? `<div class="detail-row"><span>🔩 Pezzi</span><span>${escapeHtml(i.pezzi)}</span></div>` : ''}
     ${i.prossimoData ? `<div class="detail-row"><span>📅 Prossimo (data)</span><span>${fmtDate(i.prossimoData)}</span></div>` : ''}
     ${i.prossimoKm ? `<div class="detail-row"><span>🛣️ Prossimo (km)</span><span>${fmtKm(i.prossimoKm)}</span></div>` : ''}
     ${i.note ? `<div class="detail-row"><span>📌 Note</span><span>${escapeHtml(i.note)}</span></div>` : ''}
@@ -1000,24 +1141,19 @@ function showDettaglioIntervento(id) {
   `);
 }
 
-// ========== RICAMBI ==========
 function renderRicambi() {
   const v = document.getElementById('view-ricambi');
   v.innerHTML = `
     <div class="card">
       <h3>🔩 Ricerca Ricambi</h3>
-      <label>Marca veicolo</label>
-      <input id="ricerca_marca" placeholder="es. Fiat">
-      <label>Modello</label>
-      <input id="ricerca_modello" placeholder="es. Panda">
-      <label>Anno</label>
-      <input id="ricerca_anno" type="number" placeholder="es. 2018">
-      <label>Tipo ricambio</label>
+      <label>Marca</label><input id="ricerca_marca" placeholder="es. Fiat">
+      <label>Modello</label><input id="ricerca_modello" placeholder="es. Panda">
+      <label>Anno</label><input id="ricerca_anno" type="number" placeholder="es. 2018">
+      <label>Tipo</label>
       <select id="ricerca_tipo">
         <option value="">-- Tutti --</option>
         <option value="filtro olio">Filtro olio</option>
         <option value="filtro aria">Filtro aria</option>
-        <option value="filtro abitacolo">Filtro abitacolo</option>
         <option value="olio motore">Olio motore</option>
         <option value="pastiglie freni">Pastiglie freni</option>
         <option value="candele">Candele</option>
@@ -1036,7 +1172,6 @@ function cercaRicambi() {
   const tipo = document.getElementById('ricerca_tipo').value;
   const query = [marca, modello, anno, tipo].filter(x => x).join(' ');
   if (!query) { alert('Inserisci almeno un parametro'); return; }
-  
   document.getElementById('risultatiRicambi').innerHTML = `
     <div class="card">
       <h3>🔍 Cerca: "${escapeHtml(query)}"</h3>
@@ -1049,19 +1184,23 @@ function cercaRicambi() {
   `;
 }
 
-// ========== IMPOSTAZIONI ==========
 function renderImpostazioni() {
   const v = document.getElementById('view-impostazioni');
   const size = new Blob([JSON.stringify(db)]).size;
   v.innerHTML = `
     <div class="card">
+      <h3>☁️ Sincronizzazione</h3>
+      <p class="item-sub">✅ I dati sono sincronizzati su Firebase in tempo reale</p>
+      <p class="item-sub">📱 Funziona su più dispositivi contemporaneamente</p>
+      <p class="item-sub">💾 Cache locale disponibile anche offline</p>
+    </div>
+    <div class="card">
       <h3>🔐 Sessione</h3>
       <button class="btn btn-danger btn-block" onclick="logout()">🚪 Esci (logout)</button>
-      <p class="item-sub" style="margin-top:8px">Dovrai reinserire la password</p>
     </div>
     <div class="card">
       <h3>💾 Backup dati</h3>
-      <p class="item-sub" style="margin-bottom:10px">Dimensione: ${(size/1024).toFixed(1)} KB</p>
+      <p class="item-sub" style="margin-bottom:10px">Dimensione locale: ${(size/1024).toFixed(1)} KB</p>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="exportData()">📤 Esporta JSON</button>
         <button class="btn btn-accent" onclick="document.getElementById('importFile').click()">📥 Importa</button>
@@ -1069,12 +1208,8 @@ function renderImpostazioni() {
       </div>
     </div>
     <div class="card">
-      <h3>🗑️ Zona pericolosa</h3>
-      <button class="btn btn-danger" onclick="resetAll()">Cancella TUTTI i dati</button>
-    </div>
-    <div class="card">
       <h3>ℹ️ Info</h3>
-      <div class="detail-row"><span>Versione</span><span>3.1 - Con login</span></div>
+      <div class="detail-row"><span>Versione</span><span>4.0 - Firebase</span></div>
       <div class="detail-row"><span>Clienti</span><span>${db.clienti.length}</span></div>
       <div class="detail-row"><span>Auto</span><span>${db.auto.length}</span></div>
       <div class="detail-row"><span>Interventi</span><span>${db.interventi.length}</span></div>
@@ -1097,32 +1232,52 @@ function importData(e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = async ev => {
     try {
       const data = JSON.parse(ev.target.result);
       if (!data.clienti || !data.auto || !data.interventi) throw new Error('Formato non valido');
-      if (!confirm('Sostituire i dati attuali?')) return;
-      db = data;
-      if (!db.nextId) db.nextId = 1;
-      if (!db.preventivi) db.preventivi = [];
-      saveDB();
-      alert('✅ Importato');
-      renderCurrent();
+      if (!confirm('Sostituire TUTTI i dati (anche sul cloud)?')) return;
+      
+      // Cancella tutto su Firestore
+      const collections = ['clienti', 'auto', 'interventi', 'preventivi'];
+      for (const col of collections) {
+        const snap = await dbFirestore.collection(col).get();
+        for (const doc of snap.docs) {
+          await doc.ref.delete();
+        }
+      }
+      
+      // Reimporta
+      for (const c of data.clienti) {
+        const { id, ...rest } = c;
+        await dbFirestore.collection('clienti').doc(String(id)).set(rest);
+      }
+      for (const a of data.auto) {
+        const { id, ...rest } = a;
+        await dbFirestore.collection('auto').doc(String(id)).set(rest);
+      }
+      for (const i of data.interventi) {
+        const { id, ...rest } = i;
+        await dbFirestore.collection('interventi').doc(String(id)).set(rest);
+      }
+      for (const p of (data.preventivi || [])) {
+        const { id, ...rest } = p;
+        await dbFirestore.collection('preventivi').doc(String(id)).set(rest);
+      }
+      await dbFirestore.collection('config').doc('ids').set({ nextId: data.nextId || 1 });
+      
+      alert('✅ Dati importati su Firebase');
+      location.reload();
     } catch(err) { alert('❌ ' + err.message); }
   };
   reader.readAsText(file);
 }
 
-function resetAll() {
-  if (!confirm('Cancellare TUTTO?')) return;
-  if (!confirm('ULTIMA possibilità!')) return;
-  db = { clienti: [], auto: [], interventi: [], preventivi: [], nextId: 1 };
-  saveDB();
-  renderCurrent();
-}
-
-// ========== INIT ==========
 function initApp() {
   updateHeader();
   renderCurrent();
 }
+
+// Stato online/offline
+window.addEventListener('online', () => setSyncStatus('online', '🟢 Online'));
+window.addEventListener('offline', () => setSyncStatus('offline', '⚫ Offline'));
