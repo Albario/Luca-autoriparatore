@@ -337,24 +337,442 @@ document.getElementById('modal').addEventListener('click', e => {
 });
 
 // ============================================================
+// 🎤 RICONOSCIMENTO VOCALE
+// ============================================================
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceSupported = !!SpeechRecognition;
+
+function checkVoiceSupport() {
+  if (!voiceSupported) {
+    return `<div class="voice-not-supported">
+      ⚠️ Riconoscimento vocale non supportato da questo browser. 
+      Usa Chrome, Edge o Safari (iOS 14.5+)
+    </div>`;
+  }
+  return '';
+}
+
+// Crea un pulsante microfono per un campo specifico
+function voiceButton(targetId, isTextarea = false) {
+  if (!voiceSupported) return '';
+  return `<button type="button" class="btn-voice" onclick="startVoice('${targetId}', ${isTextarea})" title="Detta con la voce">🎤</button>`;
+}
+
+// Avvia riconoscimento per un singolo campo
+function startVoice(targetId, isTextarea = false) {
+  if (!voiceSupported) {
+    alert('Riconoscimento vocale non supportato');
+    return;
+  }
+  
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = false;
+  
+  const btn = event.target.closest('.btn-voice');
+  const originalText = btn.innerHTML;
+  btn.innerHTML = '⏳';
+  btn.classList.add('listening');
+  btn.disabled = true;
+  
+  recognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    const target = document.getElementById(targetId);
+    if (target) {
+      if (isTextarea) {
+        target.value = target.value ? (target.value + ' ' + text) : text;
+      } else {
+        target.value = text;
+      }
+      // Trigger change event per eventuali listener
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+  
+  recognition.onerror = (e) => {
+    console.error('Errore voce:', e.error);
+    if (e.error === 'not-allowed') {
+      alert('⚠️ Permesso microfono negato. Consenti l\'accesso al microfono nelle impostazioni del browser.');
+    } else if (e.error === 'no-speech') {
+      alert('🎤 Nessuna voce rilevata. Riprova.');
+    } else {
+      alert('❌ Errore riconoscimento: ' + e.error);
+    }
+  };
+  
+  recognition.onend = () => {
+    btn.innerHTML = originalText;
+    btn.classList.remove('listening');
+    btn.disabled = false;
+  };
+  
+  try {
+    recognition.start();
+  } catch(err) {
+    btn.innerHTML = originalText;
+    btn.classList.remove('listening');
+    btn.disabled = false;
+    alert('Errore avvio microfono');
+  }
+}
+
+// ========== DETTATO RAPIDO CLIENTE ==========
+function startVoiceClienteRapido() {
+  if (!voiceSupported) return;
+  
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  recognition.maxAlternatives = 1;
+  
+  const btn = document.getElementById('btnVoiceRapidoCliente');
+  btn.innerHTML = '⏳ Ascolto... (parla ora)';
+  btn.classList.add('listening');
+  btn.disabled = true;
+  
+  let finalText = '';
+  let previewDiv = document.getElementById('voicePreviewCliente');
+  if (!previewDiv) {
+    previewDiv = document.createElement('div');
+    previewDiv.id = 'voicePreviewCliente';
+    previewDiv.className = 'voice-preview';
+    btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
+  }
+  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto...</div>';
+  
+  recognition.onresult = (e) => {
+    let interim = '';
+    finalText = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        finalText += e.results[i][0].transcript + ' ';
+      } else {
+        interim += e.results[i][0].transcript;
+      }
+    }
+    const fullText = finalText + interim;
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${fullText}"</div><div style="font-size:0.75rem; color:var(--muted); margin-top:4px">Continua a parlare o clicca "Fatto"</div>`;
+  };
+  
+  recognition.onerror = (e) => {
+    console.error('Errore:', e.error);
+    if (e.error === 'not-allowed') {
+      alert('⚠️ Permesso microfono negato');
+    }
+  };
+  
+  recognition.onend = () => {
+    btn.innerHTML = '🗣️ Dettato rapido cliente';
+    btn.classList.remove('listening');
+    btn.disabled = false;
+    if (finalText.trim()) {
+      parseAndFillCliente(finalText);
+    } else {
+      previewDiv.innerHTML = '';
+    }
+  };
+  
+  try {
+    recognition.start();
+  } catch(err) {
+    alert('Errore microfono');
+  }
+}
+
+function stopVoiceClienteRapido() {
+  // Ferma il riconoscimento
+  if (window._currentRecognitionCliente) {
+    window._currentRecognitionCliente.stop();
+  }
+}
+
+// Parsing intelligente del testo dettato
+function parseAndFillCliente(text) {
+  const t = text.toLowerCase().trim();
+  const result = {
+    nome: '', cognome: '', telefono: '', email: '', indirizzo: '', note: ''
+  };
+  
+  // Estrai telefono (cerca sequenze di numeri)
+  const phoneMatch = t.match(/(?:telefono|tel\.?|cellulare|numero)?\s*[:;]?\s*(\+?\d[\d\s\-\/\.]{7,}\d)/i);
+  if (phoneMatch) {
+    result.telefono = phoneMatch[1].replace(/\s+/g, ' ').trim();
+    t = t.replace(phoneMatch[0], '');
+  }
+  
+  // Estrai email
+  const emailMatch = t.match(/[\w.-]+@[\w.-]+\.\w+/);
+  if (emailMatch) {
+    result.email = emailMatch[0];
+    t = t.replace(emailMatch[0], '');
+  }
+  
+  // Estrai parole chiave e rimuovile
+  const keywords = ['nome', 'cognome', 'telefono', 'tel', 'cellulare', 'numero', 'email', 'mail', 'indirizzo', 'note', 'abitazione', 'casa', 'domicilio'];
+  let cleaned = t;
+  keywords.forEach(k => {
+    cleaned = cleaned.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' ');
+  });
+  cleaned = cleaned.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  // Prova a dividere nome e cognome
+  const words = cleaned.split(' ').filter(w => w.length > 0);
+  
+  if (words.length >= 2) {
+    // Cerca pattern "nome X cognome Y"
+    const nomeMatch = cleaned.match(/nome\s+([a-zàèéìòù]+)/i);
+    const cognomeMatch = cleaned.match(/cognome\s+([a-zàèéìòù]+)/i);
+    
+    if (nomeMatch && cognomeMatch) {
+      result.nome = capitalize(nomeMatch[1]);
+      result.cognome = capitalize(cognomeMatch[1]);
+    } else {
+      // Altrimenti: prima parola = nome, resto = cognome
+      result.nome = capitalize(words[0]);
+      result.cognome = capitalize(words.slice(1).join(' '));
+    }
+  } else if (words.length === 1) {
+    result.nome = capitalize(words[0]);
+  }
+  
+  // Mostra preview e conferma
+  showVoicePreviewCliente(result);
+}
+
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function showVoicePreviewCliente(data) {
+  const previewDiv = document.getElementById('voicePreviewCliente');
+  if (!previewDiv) return;
+  
+  previewDiv.innerHTML = `
+    <div class="preview-title">✅ Ho capito questo:</div>
+    ${data.nome ? `<div class="preview-field"><span>Nome:</span><span>${escapeHtml(data.nome)}</span></div>` : ''}
+    ${data.cognome ? `<div class="preview-field"><span>Cognome:</span><span>${escapeHtml(data.cognome)}</span></div>` : ''}
+    ${data.telefono ? `<div class="preview-field"><span>Telefono:</span><span>${escapeHtml(data.telefono)}</span></div>` : ''}
+    ${data.email ? `<div class="preview-field"><span>Email:</span><span>${escapeHtml(data.email)}</span></div>` : ''}
+    ${data.indirizzo ? `<div class="preview-field"><span>Indirizzo:</span><span>${escapeHtml(data.indirizzo)}</span></div>` : ''}
+    <div style="margin-top:10px; display:flex; gap:6px">
+      <button class="btn btn-primary btn-sm" onclick="applyVoiceCliente()" style="flex:1">✅ Conferma</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewCliente').innerHTML=''" style="flex:1">✏️ Modifica a mano</button>
+    </div>
+  `;
+  
+  window._voiceClienteData = data;
+}
+
+function applyVoiceCliente() {
+  const data = window._voiceClienteData;
+  if (!data) return;
+  
+  if (data.nome) document.getElementById('f_nome').value = data.nome;
+  if (data.cognome) document.getElementById('f_cognome').value = data.cognome;
+  if (data.telefono) document.getElementById('f_telefono').value = data.telefono;
+  if (data.email) document.getElementById('f_email').value = data.email;
+  if (data.indirizzo) document.getElementById('f_indirizzo').value = data.indirizzo;
+  if (data.note) document.getElementById('f_note').value = data.note;
+  
+  document.getElementById('voicePreviewCliente').innerHTML = '<div style="color:var(--success); font-weight:600">✅ Dati inseriti!</div>';
+  setTimeout(() => {
+    const el = document.getElementById('voicePreviewCliente');
+    if (el) el.innerHTML = '';
+  }, 2000);
+}
+
+// ========== DETTATO RAPIDO AUTO ==========
+function startVoiceAutoRapido() {
+  if (!voiceSupported) return;
+  
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  recognition.maxAlternatives = 1;
+  
+  const btn = document.getElementById('btnVoiceRapidoAuto');
+  btn.innerHTML = '⏳ Ascolto...';
+  btn.classList.add('listening');
+  btn.disabled = true;
+  
+  let finalText = '';
+  let previewDiv = document.getElementById('voicePreviewAuto');
+  if (!previewDiv) {
+    previewDiv = document.createElement('div');
+    previewDiv.id = 'voicePreviewAuto';
+    previewDiv.className = 'voice-preview';
+    btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
+  }
+  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto...</div>';
+  
+  recognition.onresult = (e) => {
+    let interim = '';
+    finalText = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div>`;
+  };
+  
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato');
+  };
+  
+  recognition.onend = () => {
+    btn.innerHTML = '🗣️ Dettato rapido auto';
+    btn.classList.remove('listening');
+    btn.disabled = false;
+    if (finalText.trim()) parseAndFillAuto(finalText);
+    else previewDiv.innerHTML = '';
+  };
+  
+  try { recognition.start(); } catch(err) { alert('Errore microfono'); }
+}
+
+function parseAndFillAuto(text) {
+  const t = text.toLowerCase();
+  const result = { marca: '', modello: '', targa: '', anno: '', km: '' };
+  
+  // Targa: pattern italiano (2 lettere, 3 numeri, 2 lettere) o generico
+  const targaMatch = t.match(/\b([a-z]{2})\s*(\d{3})\s*([a-z]{2})\b/i) || 
+                     t.match(/targa\s*[:;]?\s*([a-z0-9\s]{5,10})/i);
+  if (targaMatch) {
+    result.targa = targaMatch[0].replace(/targa\s*[:;]?\s*/i, '').toUpperCase().replace(/\s+/g, '');
+    t = t.replace(targaMatch[0], '');
+  }
+  
+  // Anno: 4 cifre tra 1950 e 2030
+  const annoMatch = t.match(/\b(19|20)\d{2}\b/);
+  if (annoMatch) {
+    result.anno = annoMatch[0];
+    t = t.replace(annoMatch[0], '');
+  }
+  
+  // Chilometri
+  const kmMatch = t.match(/(\d{1,6})\s*(km|chilometri|chilometraggio)/i) ||
+                  t.match(/(km|chilometri|chilometraggio)\s*[:;]?\s*(\d{1,6})/i);
+  if (kmMatch) {
+    result.km = kmMatch[1].match(/\d/) ? kmMatch[1] : kmMatch[2];
+    t = t.replace(kmMatch[0], '');
+  }
+  
+  // Rimuovi parole chiave
+  const keywords = ['marca', 'modello', 'targa', 'anno', 'km', 'chilometri', 'chilometraggio', 'auto', 'vettura', 'veicolo'];
+  let cleaned = t;
+  keywords.forEach(k => {
+    cleaned = cleaned.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' ');
+  });
+  cleaned = cleaned.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  // Marca e modello
+  const marcaMatch = cleaned.match(/marca\s+([a-zàèéìòù\s]+)/i);
+  const modelloMatch = cleaned.match(/modello\s+([a-zàèéìòù\s]+)/i);
+  
+  if (marcaMatch && modelloMatch) {
+    result.marca = capitalize(marcaMatch[1].trim());
+    result.modello = capitalize(modelloMatch[1].trim());
+  } else {
+    const words = cleaned.split(' ').filter(w => w.length > 1);
+    if (words.length >= 2) {
+      result.marca = capitalize(words[0]);
+      result.modello = capitalize(words.slice(1).join(' '));
+    } else if (words.length === 1) {
+      result.marca = capitalize(words[0]);
+    }
+  }
+  
+  showVoicePreviewAuto(result);
+}
+
+function showVoicePreviewAuto(data) {
+  const previewDiv = document.getElementById('voicePreviewAuto');
+  if (!previewDiv) return;
+  
+  previewDiv.innerHTML = `
+    <div class="preview-title">✅ Ho capito questo:</div>
+    ${data.marca ? `<div class="preview-field"><span>Marca:</span><span>${escapeHtml(data.marca)}</span></div>` : ''}
+    ${data.modello ? `<div class="preview-field"><span>Modello:</span><span>${escapeHtml(data.modello)}</span></div>` : ''}
+    ${data.targa ? `<div class="preview-field"><span>Targa:</span><span>${escapeHtml(data.targa)}</span></div>` : ''}
+    ${data.anno ? `<div class="preview-field"><span>Anno:</span><span>${escapeHtml(data.anno)}</span></div>` : ''}
+    ${data.km ? `<div class="preview-field"><span>Km:</span><span>${escapeHtml(data.km)}</span></div>` : ''}
+    <div style="margin-top:10px; display:flex; gap:6px">
+      <button class="btn btn-primary btn-sm" onclick="applyVoiceAuto()" style="flex:1">✅ Conferma</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewAuto').innerHTML=''" style="flex:1">✏️ Modifica</button>
+    </div>
+  `;
+  
+  window._voiceAutoData = data;
+}
+
+function applyVoiceAuto() {
+  const data = window._voiceAutoData;
+  if (!data) return;
+  
+  if (data.marca) document.getElementById('f_marca').value = data.marca;
+  if (data.modello) document.getElementById('f_modello').value = data.modello;
+  if (data.targa) document.getElementById('f_targa').value = data.targa;
+  if (data.anno) document.getElementById('f_anno').value = data.anno;
+  if (data.km) document.getElementById('f_km').value = data.km;
+  
+  document.getElementById('voicePreviewAuto').innerHTML = '<div style="color:var(--success); font-weight:600">✅ Dati inseriti!</div>';
+  setTimeout(() => {
+    const el = document.getElementById('voicePreviewAuto');
+    if (el) el.innerHTML = '';
+  }, 2000);
+}
+
+// ============================================================
 // CLIENTI CRUD
 // ============================================================
 function openClienteModal(id = null) {
   const c = id ? db.clienti.find(x => x.id === id) : { nome:'', cognome:'', telefono:'', email:'', indirizzo:'', note:'' };
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Cliente</h2>
+    ${checkVoiceSupport()}
+    ${!id && voiceSupported ? `
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoCliente" onclick="startVoiceClienteRapido()">
+        🗣️ Dettato rapido cliente
+      </button>
+      <div class="voice-hint">
+        💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>
+        "nome Mario cognome Rossi telefono 333 1234567 email mario@esempio.it"
+      </div>
+    ` : ''}
     <label>Nome</label>
-    <input id="f_nome" value="${escapeHtml(c.nome)}" placeholder="Mario">
+    <div class="input-with-voice">
+      <input id="f_nome" value="${escapeHtml(c.nome)}" placeholder="Mario">
+      ${voiceButton('f_nome')}
+    </div>
     <label>Cognome</label>
-    <input id="f_cognome" value="${escapeHtml(c.cognome)}" placeholder="Rossi">
+    <div class="input-with-voice">
+      <input id="f_cognome" value="${escapeHtml(c.cognome)}" placeholder="Rossi">
+      ${voiceButton('f_cognome')}
+    </div>
     <label>Telefono</label>
-    <input id="f_telefono" value="${escapeHtml(c.telefono)}" type="tel" placeholder="+39 333 1234567">
+    <div class="input-with-voice">
+      <input id="f_telefono" value="${escapeHtml(c.telefono)}" type="tel" placeholder="+39 333 1234567">
+      ${voiceButton('f_telefono')}
+    </div>
     <label>Email</label>
-    <input id="f_email" value="${escapeHtml(c.email)}" type="email">
+    <div class="input-with-voice">
+      <input id="f_email" value="${escapeHtml(c.email)}" type="email">
+      ${voiceButton('f_email')}
+    </div>
     <label>Indirizzo</label>
-    <input id="f_indirizzo" value="${escapeHtml(c.indirizzo)}">
+    <div class="input-with-voice">
+      <input id="f_indirizzo" value="${escapeHtml(c.indirizzo)}">
+      ${voiceButton('f_indirizzo')}
+    </div>
     <label>Note</label>
-    <textarea id="f_note" rows="2">${escapeHtml(c.note)}</textarea>
+    <div class="input-with-voice">
+      <textarea id="f_note" rows="2">${escapeHtml(c.note)}</textarea>
+      ${voiceButton('f_note', true)}
+    </div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="saveCliente(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-danger" onclick="deleteCliente(${id})">🗑️ Elimina</button>` : ''}
@@ -431,25 +849,56 @@ function openAutoModal(id = null, prefillClienteId = null) {
   const opts = db.clienti.map(c => `<option value="${c.id}" ${c.id == a.clienteId ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuova'} Auto</h2>
+    ${checkVoiceSupport()}
+    ${!id && voiceSupported ? `
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoAuto" onclick="startVoiceAutoRapido()">
+        🗣️ Dettato rapido auto
+      </button>
+      <div class="voice-hint">
+        💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>
+        "marca Fiat modello Panda targa AB 123 CD anno 2018 chilometri 85000"
+      </div>
+    ` : ''}
     <label>Cliente *</label>
     <select id="f_clienteId">
       <option value="">-- Seleziona --</option>
       ${opts}
     </select>
     <label>Marca</label>
-    <input id="f_marca" value="${escapeHtml(a.marca)}" placeholder="Fiat">
+    <div class="input-with-voice">
+      <input id="f_marca" value="${escapeHtml(a.marca)}" placeholder="Fiat">
+      ${voiceButton('f_marca')}
+    </div>
     <label>Modello</label>
-    <input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">
+    <div class="input-with-voice">
+      <input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">
+      ${voiceButton('f_modello')}
+    </div>
     <label>Targa</label>
-    <input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">
+    <div class="input-with-voice">
+      <input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">
+      ${voiceButton('f_targa')}
+    </div>
     <label>Telaio (VIN)</label>
-    <input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">
+    <div class="input-with-voice">
+      <input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">
+      ${voiceButton('f_telaio')}
+    </div>
     <label>Anno</label>
-    <input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">
+    <div class="input-with-voice">
+      <input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">
+      ${voiceButton('f_anno')}
+    </div>
     <label>Chilometri attuali</label>
-    <input id="f_km" value="${escapeHtml(a.km)}" type="number" placeholder="85000">
+    <div class="input-with-voice">
+      <input id="f_km" value="${escapeHtml(a.km)}" type="number" placeholder="85000">
+      ${voiceButton('f_km')}
+    </div>
     <label>Note</label>
-    <textarea id="f_note" rows="2">${escapeHtml(a.note)}</textarea>
+    <div class="input-with-voice">
+      <textarea id="f_note" rows="2">${escapeHtml(a.note)}</textarea>
+      ${voiceButton('f_note', true)}
+    </div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="saveAuto(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-danger" onclick="deleteAuto(${id})">🗑️ Elimina</button>` : ''}
