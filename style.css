@@ -547,3 +547,17 @@ label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 
   margin-bottom: 12px;
   text-align: center;
 }
+.voice-rapido.listening {
+  background: linear-gradient(135deg, var(--danger), #b91c1c);
+  animation: pulse-voice 1s infinite;
+}
+
+.voice-rapido.listening::before {
+  content: '🔴 ';
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50%, 100% { opacity: 1; }
+  25%, 75% { opacity: 0.3; }
+}
