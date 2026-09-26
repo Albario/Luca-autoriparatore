@@ -340,11 +340,26 @@ document.getElementById('modal').addEventListener('click', e => {
 // ============================================================
 // 🎤 RICONOSCIMENTO VOCALE
 // ============================================================
+// ============================================================
+// 🎤 RICONOSCIMENTO VOCALE
+// ============================================================
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceSupported = !!SpeechRecognition;
 let currentRecognitionCliente = null;
 let currentRecognitionAuto = null;
 let isStoppingCliente = false;
 let isStoppingAuto = false;
+
+
+function checkVoiceSupport() {
+  if (!SpeechRecognition) {
+    return `<div class="voice-not-supported">
+      ⚠️ Riconoscimento vocale non supportato da questo browser. 
+      Usa Chrome, Edge o Safari (iOS 14.5+)
+    </div>`;
+  }
+  return '';
+}
 
 function voiceButton(targetId, isTextarea = false) {
   return `<button type="button" class="btn-voice" onclick="startVoice('${targetId}', ${isTextarea})" title="Detta con la voce">🎤</button>`;
@@ -418,7 +433,6 @@ function startVoiceClienteRapido() {
   }
 
   if (currentRecognitionCliente) {
-    // Già in ascolto, ferma
     stopVoiceClienteRapido();
     return;
   }
@@ -463,7 +477,7 @@ function startVoiceClienteRapido() {
     if (e.error === 'not-allowed') {
       alert('⚠️ Permesso microfono negato');
     } else if (e.error === 'aborted') {
-      // Ignora, è lo stop manuale
+      // Ignora
     }
   };
 
@@ -502,7 +516,6 @@ function stopVoiceClienteRapido() {
     console.error('Errore stop:', err);
   }
   
-  // Fallback: se non si ferma in 2 secondi, abortisci
   setTimeout(() => {
     if (currentRecognitionCliente && isStoppingCliente) {
       try {
@@ -618,7 +631,7 @@ function startVoiceAutoRapido() {
 
   recognition.onerror = (e) => { 
     if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato');
-    else if (e.error === 'aborted') {} // Ignora
+    else if (e.error === 'aborted') {}
   };
 
   recognition.onend = () => {
@@ -724,6 +737,10 @@ function applyVoiceAuto() {
   if (d.km) document.getElementById('f_km').value = d.km;
   document.getElementById('voicePreviewAuto').innerHTML = '<div style="color:var(--success);font-weight:600">✅ Dati inseriti!</div>';
 }
+
+// ============================================================
+// CLIENTI CRUD
+// ============================================================
 
 // ============================================================
 // CLIENTI CRUD
