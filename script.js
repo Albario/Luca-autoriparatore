@@ -940,21 +940,27 @@ async function saveAuto(id) {
   if (!data.clienteId) { alert('Seleziona un cliente'); return; }
   
   if (id) {
-    Object.assign(db.auto.find(x => x.id === id), data);
+    const auto = db.auto.find(x => x.id === id);
+    Object.assign(auto, data);
     await firestoreSet('auto', id, data);
   } else {
     const newIdVal = newId();
-    db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+    const newAuto = { id: newIdVal, ...data, createdAt: new Date().toISOString() };
+    db.auto.push(newAuto);
     await firestoreSet('auto', newIdVal, data);
   }
-   saveDB();
+  
+  saveDB();
   closeModal();
   
-  // Aspetta la sincronizzazione Firebase prima di renderizzare
-  setTimeout(() => {
-    if (currentClienteId === data.clienteId) renderSchedaCliente();
-    else renderCurrent();
-  }, 500);
+  // Aspetta che il listener Firebase aggiorni i dati
+  await new Promise(resolve => setTimeout(resolve, 300));
+  
+  if (currentClienteId == data.clienteId) {
+    renderSchedaCliente();
+  } else {
+    renderCurrent();
+  }
 }
 
 async function deleteAuto(id) {
@@ -1082,7 +1088,7 @@ async function saveIntervento(id) {
   
   setTimeout(() => {
     const auto = db.auto.find(a => a.id === data.autoId);
-    if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
+    if (auto && currentClienteId == auto.clienteId) renderSchedaCliente();
     else renderCurrent();
   }, 500);
 }
@@ -1397,12 +1403,12 @@ function renderListaClienti() {
 }
 
 function renderCardCliente(c, matchInfo = '') {
-  const autoCount = db.auto.filter(a => a.clienteId === c.id).length;
-  const intCount = db.interventi.filter(i => {
-    const a = db.auto.find(x => x.id === i.autoId);
-    return a && a.clienteId === c.id;
-  }).length;
-  const prevCount = db.preventivi.filter(p => p.clienteId === c.id).length;
+const autoCount = db.auto.filter(a => a.clienteId == c.id).length;
+const intCount = db.interventi.filter(i => {
+  const a = db.auto.find(x => x.id == i.autoId);
+  return a && a.clienteId == c.id;
+}).length;
+const prevCount = db.preventivi.filter(p => p.clienteId == c.id).length;
   const ultimaAuto = db.auto.filter(a => a.clienteId === c.id).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
   return `
     <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${c.id})">
@@ -1445,17 +1451,26 @@ function renderSchedaCliente() {
   const v = document.getElementById('view-scheda-cliente');
   const c = db.clienti.find(x => x.id === currentClienteId);
   if (!c) { tornaAListaClienti(); return; }
-  const autoList = db.auto.filter(a => a.clienteId === c.id);
+  const autoList = db.auto.filter(a => a.clienteId == c.id);
+
+    console.log('🔍 Debug scheda cliente:', {
+    clienteId: c.id,
+    tipoId: typeof c.id,
+    totaleAuto: db.auto.length,
+    autoFiltrate: autoList.length,
+    autoDetails: db.auto.map(a => ({ id: a.id, clienteId: a.clienteId, tipo: typeof a.clienteId }))
+  });
+  
   const tuttiInterventi = [];
   autoList.forEach(a => {
     db.interventi.filter(i => i.autoId === a.id).forEach(i => tuttiInterventi.push({ ...i, auto: a }));
   });
   tuttiInterventi.sort((a,b) => (b.data||'').localeCompare(a.data||''));
-  const preventiviList = db.preventivi.filter(p => p.clienteId === c.id).sort((a,b) => (b.data||'').localeCompare(a.data||''));
+  const preventiviList = db.preventivi.filter(p => p.clienteId == c.id).sort((a,b) => (b.data||'').localeCompare(a.data||''));
   const incassoTot = tuttiInterventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
   let contentHtml = '';
   if (currentSubTab === 'auto') contentHtml = renderSubTabAuto(c, autoList);
-  else if (currentSubTab === 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
+  else if (currentSubTab == 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
   else if (currentSubTab === 'preventivi') contentHtml = renderSubTabPreventivi(c, preventiviList);
   v.innerHTML = `
     <button class="back-btn" onclick="tornaAListaClienti()">← Torna alla lista</button>
