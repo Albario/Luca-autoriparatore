@@ -141,17 +141,54 @@ async function caricaDatiDaCloud() {
       dbFirestore.collection('config').doc('ids').get()
     ]);
     
-    db.clienti = clientiSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
-    db.auto = autoSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
-    db.interventi = interventiSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
-    db.preventivi = preventiviSnap.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+    // Normalizza tutti gli ID a numeri
+    db.clienti = clientiSnap.docs.map(doc => {
+      const data = doc.data();
+      return { 
+        id: parseInt(doc.id), 
+        ...data,
+        // Assicurati che tutti i riferimenti siano numeri
+      };
+    });
+    
+    db.auto = autoSnap.docs.map(doc => {
+      const data = doc.data();
+      return { 
+        id: parseInt(doc.id),
+        clienteId: parseInt(data.clienteId) || data.clienteId,
+        ...data,
+        clienteId: parseInt(data.clienteId)
+      };
+    });
+    
+    db.interventi = interventiSnap.docs.map(doc => {
+      const data = doc.data();
+      return { 
+        id: parseInt(doc.id),
+        autoId: parseInt(data.autoId),
+        ...data,
+        autoId: parseInt(data.autoId)
+      };
+    });
+    
+    db.preventivi = preventiviSnap.docs.map(doc => {
+      const data = doc.data();
+      return { 
+        id: parseInt(doc.id),
+        clienteId: parseInt(data.clienteId),
+        autoId: data.autoId ? parseInt(data.autoId) : null,
+        ...data,
+        clienteId: parseInt(data.clienteId),
+        autoId: data.autoId ? parseInt(data.autoId) : null
+      };
+    });
+    
     db.nextId = configSnap.exists ? (configSnap.data().nextId || 1) : 1;
     
     setSyncStatus('online', '🟢 Online');
   } catch (err) {
     console.error('Errore caricamento:', err);
     setSyncStatus('error', '❌ Errore sync');
-    // Prova a caricare da cache locale
     const cached = localStorage.getItem('officina_db_cache');
     if (cached) {
       try {
@@ -166,11 +203,13 @@ async function caricaDatiDaCloud() {
 // LISTENER TEMPO REALE (aggiornamenti automatici)
 // ============================================================
 function avviaListenerTempoReale() {
-  // Ascolta cambiamenti su ogni collezione
-  const listen = (collection, onUpdate) => {
+  const listen = (collection, onUpdate, normalizeFn) => {
     return dbFirestore.collection(collection).onSnapshot(
       snapshot => {
-        const data = snapshot.docs.map(doc => ({ id: parseInt(doc.id), ...doc.data() }));
+        const data = snapshot.docs.map(doc => {
+          const item = { id: parseInt(doc.id), ...doc.data() };
+          return normalizeFn ? normalizeFn(item) : item;
+        });
         onUpdate(data);
         salvaCacheLocale();
         renderCurrent();
@@ -183,11 +222,23 @@ function avviaListenerTempoReale() {
   };
   
   unsubscribers.push(listen('clienti', data => db.clienti = data));
-  unsubscribers.push(listen('auto', data => db.auto = data));
-  unsubscribers.push(listen('interventi', data => db.interventi = data));
-  unsubscribers.push(listen('preventivi', data => db.preventivi = data));
   
-  // Ascolta anche il nextId
+  unsubscribers.push(listen('auto', data => db.auto = data, item => {
+    item.clienteId = parseInt(item.clienteId);
+    return item;
+  }));
+  
+  unsubscribers.push(listen('interventi', data => db.interventi = data, item => {
+    item.autoId = parseInt(item.autoId);
+    return item;
+  }));
+  
+  unsubscribers.push(listen('preventivi', data => db.preventivi = data, item => {
+    item.clienteId = parseInt(item.clienteId);
+    if (item.autoId) item.autoId = parseInt(item.autoId);
+    return item;
+  }));
+  
   unsubscribers.push(
     dbFirestore.collection('config').doc('ids').onSnapshot(doc => {
       if (doc.exists) db.nextId = doc.data().nextId || 1;
