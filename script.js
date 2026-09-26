@@ -340,6 +340,8 @@ document.getElementById('modal').addEventListener('click', e => {
 // 🎤 RICONOSCIMENTO VOCALE
 // ============================================================
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let currentRecognitionCliente = null;
+let currentRecognitionAuto = null;
 const voiceSupported = !!SpeechRecognition;
 
 function checkVoiceSupport() {
@@ -420,19 +422,27 @@ function startVoice(targetId, isTextarea = false) {
 
 // ========== DETTATO RAPIDO CLIENTE ==========
 function startVoiceClienteRapido() {
-  if (!voiceSupported) return;
-  
+  if (!SpeechRecognition) {
+    alert('⚠️ Riconoscimento vocale non supportato.\nUsa Chrome o Edge.');
+    return;
+  }
+
   const recognition = new SpeechRecognition();
   recognition.lang = 'it-IT';
   recognition.interimResults = true;
   recognition.continuous = true;
   recognition.maxAlternatives = 1;
-  
+
+  currentRecognitionCliente = recognition;
+
   const btn = document.getElementById('btnVoiceRapidoCliente');
-  btn.innerHTML = '⏳ Ascolto... (parla ora)';
-  btn.classList.add('listening');
-  btn.disabled = true;
+  if (!btn) return;
   
+  // Cambia il pulsante in "Fatto"
+  btn.innerHTML = '✅ Fatto (clicca per terminare)';
+  btn.classList.add('listening');
+  btn.onclick = stopVoiceClienteRapido; // Cambia l'azione del click
+
   let finalText = '';
   let previewDiv = document.getElementById('voicePreviewCliente');
   if (!previewDiv) {
@@ -441,44 +451,45 @@ function startVoiceClienteRapido() {
     previewDiv.className = 'voice-preview';
     btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
   }
-  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto...</div>';
-  
+  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto... parla ora</div>';
+
   recognition.onresult = (e) => {
     let interim = '';
     finalText = '';
     for (let i = 0; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        finalText += e.results[i][0].transcript + ' ';
-      } else {
-        interim += e.results[i][0].transcript;
-      }
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
     }
-    const fullText = finalText + interim;
-    previewDiv.innerHTML = `<div class="preview-title">🎤 "${fullText}"</div><div style="font-size:0.75rem; color:var(--muted); margin-top:4px">Continua a parlare o clicca "Fatto"</div>`;
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "✅ Fatto" quando hai finito</div>`;
   };
-  
+
   recognition.onerror = (e) => {
-    console.error('Errore:', e.error);
-    if (e.error === 'not-allowed') {
-      alert('⚠️ Permesso microfono negato');
-    }
+    console.error('Errore voce:', e.error);
+    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato');
   };
-  
+
   recognition.onend = () => {
     btn.innerHTML = '🗣️ Dettato rapido cliente';
     btn.classList.remove('listening');
-    btn.disabled = false;
-    if (finalText.trim()) {
-      parseAndFillCliente(finalText);
-    } else {
-      previewDiv.innerHTML = '';
-    }
+    btn.onclick = startVoiceClienteRapido; // Ripristina l'azione originale
+    currentRecognitionCliente = null;
+    if (finalText.trim()) parseAndFillCliente(finalText);
+    else previewDiv.innerHTML = '';
   };
-  
-  try {
-    recognition.start();
-  } catch(err) {
-    alert('Errore microfono');
+
+  try { 
+    recognition.start(); 
+  } catch(err) { 
+    alert('Errore microfono: ' + err.message);
+    btn.innerHTML = '🗣️ Dettato rapido cliente';
+    btn.classList.remove('listening');
+    btn.onclick = startVoiceClienteRapido;
+  }
+}
+
+function stopVoiceClienteRapido() {
+  if (currentRecognitionCliente) {
+    currentRecognitionCliente.stop();
   }
 }
 
@@ -586,19 +597,25 @@ function applyVoiceCliente() {
 
 // ========== DETTATO RAPIDO AUTO ==========
 function startVoiceAutoRapido() {
-  if (!voiceSupported) return;
-  
+  if (!SpeechRecognition) {
+    alert('⚠️ Riconoscimento vocale non supportato.\nUsa Chrome o Edge.');
+    return;
+  }
+
   const recognition = new SpeechRecognition();
   recognition.lang = 'it-IT';
   recognition.interimResults = true;
   recognition.continuous = true;
-  recognition.maxAlternatives = 1;
-  
+
+  currentRecognitionAuto = recognition;
+
   const btn = document.getElementById('btnVoiceRapidoAuto');
-  btn.innerHTML = '⏳ Ascolto...';
-  btn.classList.add('listening');
-  btn.disabled = true;
+  if (!btn) return;
   
+  btn.innerHTML = '✅ Fatto (clicca per terminare)';
+  btn.classList.add('listening');
+  btn.onclick = stopVoiceAutoRapido;
+
   let finalText = '';
   let previewDiv = document.getElementById('voicePreviewAuto');
   if (!previewDiv) {
@@ -608,30 +625,43 @@ function startVoiceAutoRapido() {
     btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
   }
   previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto...</div>';
-  
+
   recognition.onresult = (e) => {
-    let interim = '';
-    finalText = '';
+    let interim = ''; finalText = '';
     for (let i = 0; i < e.results.length; i++) {
       if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
       else interim += e.results[i][0].transcript;
     }
-    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div>`;
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "✅ Fatto" quando hai finito</div>`;
   };
-  
-  recognition.onerror = (e) => {
-    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato');
+
+  recognition.onerror = (e) => { 
+    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato'); 
   };
-  
+
   recognition.onend = () => {
     btn.innerHTML = '🗣️ Dettato rapido auto';
     btn.classList.remove('listening');
-    btn.disabled = false;
+    btn.onclick = startVoiceAutoRapido;
+    currentRecognitionAuto = null;
     if (finalText.trim()) parseAndFillAuto(finalText);
     else previewDiv.innerHTML = '';
   };
-  
-  try { recognition.start(); } catch(err) { alert('Errore microfono'); }
+
+  try { 
+    recognition.start(); 
+  } catch(err) { 
+    alert('Errore microfono: ' + err.message);
+    btn.innerHTML = '🗣️ Dettato rapido auto';
+    btn.classList.remove('listening');
+    btn.onclick = startVoiceAutoRapido;
+  }
+}
+
+function stopVoiceAutoRapido() {
+  if (currentRecognitionAuto) {
+    currentRecognitionAuto.stop();
+  }
 }
 
 function parseAndFillAuto(text) {
