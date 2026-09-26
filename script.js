@@ -141,49 +141,52 @@ async function caricaDatiDaCloud() {
       dbFirestore.collection('config').doc('ids').get()
     ]);
     
-    // Normalizza tutti gli ID a numeri
-    db.clienti = clientiSnap.docs.map(doc => {
-      const data = doc.data();
-      return { 
-        id: parseInt(doc.id), 
-        ...data,
-        // Assicurati che tutti i riferimenti siano numeri
-      };
-    });
+    db.clienti = clientiSnap.docs.map(doc => ({ 
+      id: Number(doc.id), 
+      ...doc.data() 
+    }));
     
+    // Ripara auto con clienteId NaN
     db.auto = autoSnap.docs.map(doc => {
       const data = doc.data();
+      let cid = Number(data.clienteId);
+      if (isNaN(cid)) cid = 0; // fallback
       return { 
-        id: parseInt(doc.id),
-        clienteId: parseInt(data.clienteId) || data.clienteId,
+        id: Number(doc.id), 
         ...data,
-        clienteId: parseInt(data.clienteId)
+        clienteId: cid
       };
     });
     
     db.interventi = interventiSnap.docs.map(doc => {
       const data = doc.data();
+      let aid = Number(data.autoId);
+      if (isNaN(aid)) aid = 0;
       return { 
-        id: parseInt(doc.id),
-        autoId: parseInt(data.autoId),
+        id: Number(doc.id), 
         ...data,
-        autoId: parseInt(data.autoId)
+        autoId: aid
       };
     });
     
     db.preventivi = preventiviSnap.docs.map(doc => {
       const data = doc.data();
+      let cid = Number(data.clienteId);
+      if (isNaN(cid)) cid = 0;
+      let aid = data.autoId ? Number(data.autoId) : null;
+      if (aid !== null && isNaN(aid)) aid = null;
       return { 
-        id: parseInt(doc.id),
-        clienteId: parseInt(data.clienteId),
-        autoId: data.autoId ? parseInt(data.autoId) : null,
+        id: Number(doc.id), 
         ...data,
-        clienteId: parseInt(data.clienteId),
-        autoId: data.autoId ? parseInt(data.autoId) : null
+        clienteId: cid,
+        autoId: aid
       };
     });
     
-    db.nextId = configSnap.exists ? (configSnap.data().nextId || 1) : 1;
+    db.nextId = configSnap.exists ? (Number(configSnap.data().nextId) || 1) : 1;
+    
+    // 🔧 RIPARAZIONE AUTOMATICA: correggi auto con clienteId invalido
+    await riparaDatiInvalidi();
     
     setSyncStatus('online', '🟢 Online');
   } catch (err) {
@@ -191,10 +194,30 @@ async function caricaDatiDaCloud() {
     setSyncStatus('error', '❌ Errore sync');
     const cached = localStorage.getItem('officina_db_cache');
     if (cached) {
-      try {
-        db = JSON.parse(cached);
-        alert('⚠️ Impossibile connettersi a Firebase. Uso dati in cache.');
-      } catch(e) {}
+      try { db = JSON.parse(cached); } catch(e) {}
+    }
+  }
+}
+
+// 🔧 Funzione di riparazione
+async function riparaDatiInvalidi() {
+  const autoDaRiparare = db.auto.filter(a => isNaN(a.clienteId) || a.clienteId === 0 || a.clienteId === null);
+  
+  if (autoDaRiparare.length > 0) {
+    console.log('🔧 Riparazione:', autoDaRiparare.length, 'auto con clienteId invalido');
+    
+    for (const auto of autoDaRiparare) {
+      // Cerca il cliente corretto (se c'è un solo cliente, usa quello)
+      if (db.clienti.length === 1) {
+        auto.clienteId = db.clienti[0].id;
+        await firestoreSet('auto', auto.id, { 
+          ...auto, 
+          clienteId: auto.clienteId 
+        });
+        console.log('✅ Auto riparata:', auto.marca, auto.modello, '→ cliente', auto.clienteId);
+      } else {
+        console.warn('⚠️ Auto senza cliente valido:', auto.marca, auto.modello, '- assegnala manualmente');
+      }
     }
   }
 }
@@ -207,7 +230,7 @@ function avviaListenerTempoReale() {
     return dbFirestore.collection(collection).onSnapshot(
       snapshot => {
         const data = snapshot.docs.map(doc => {
-          const item = { id: parseInt(doc.id), ...doc.data() };
+          const item = { id: Number(doc.id), ...doc.data() };
           return normalizeFn ? normalizeFn(item) : item;
         });
         onUpdate(data);
@@ -224,24 +247,34 @@ function avviaListenerTempoReale() {
   unsubscribers.push(listen('clienti', data => db.clienti = data));
   
   unsubscribers.push(listen('auto', data => db.auto = data, item => {
-    item.clienteId = parseInt(item.clienteId);
+    let cid = Number(item.clienteId);
+    if (isNaN(cid)) cid = 0;
+    item.clienteId = cid;
     return item;
   }));
   
   unsubscribers.push(listen('interventi', data => db.interventi = data, item => {
-    item.autoId = parseInt(item.autoId);
+    let aid = Number(item.autoId);
+    if (isNaN(aid)) aid = 0;
+    item.autoId = aid;
     return item;
   }));
   
   unsubscribers.push(listen('preventivi', data => db.preventivi = data, item => {
-    item.clienteId = parseInt(item.clienteId);
-    if (item.autoId) item.autoId = parseInt(item.autoId);
+    let cid = Number(item.clienteId);
+    if (isNaN(cid)) cid = 0;
+    item.clienteId = cid;
+    if (item.autoId) {
+      let aid = Number(item.autoId);
+      if (isNaN(aid)) aid = null;
+      item.autoId = aid;
+    }
     return item;
   }));
   
   unsubscribers.push(
     dbFirestore.collection('config').doc('ids').onSnapshot(doc => {
-      if (doc.exists) db.nextId = doc.data().nextId || 1;
+      if (doc.exists) db.nextId = Number(doc.data().nextId) || 1;
     })
   );
 }
@@ -978,8 +1011,16 @@ function openAutoModal(id = null, prefillClienteId = null) {
 }
 
 async function saveAuto(id) {
+  const clienteIdRaw = document.getElementById('f_clienteId').value;
+  const clienteIdNum = Number(clienteIdRaw);
+  
+  if (!clienteIdRaw || isNaN(clienteIdNum)) {
+    alert('️ Seleziona un cliente valido');
+    return;
+  }
+  
   const data = {
-    clienteId: parseInt(document.getElementById('f_clienteId').value),
+    clienteId: clienteIdNum,
     marca: document.getElementById('f_marca').value.trim(),
     modello: document.getElementById('f_modello').value.trim(),
     targa: document.getElementById('f_targa').value.trim().toUpperCase(),
@@ -988,11 +1029,10 @@ async function saveAuto(id) {
     km: document.getElementById('f_km').value,
     note: document.getElementById('f_note').value.trim()
   };
-  if (!data.clienteId) { alert('Seleziona un cliente'); return; }
   
   if (id) {
     const auto = db.auto.find(x => x.id === id);
-    Object.assign(auto, data);
+    if (auto) Object.assign(auto, data);
     await firestoreSet('auto', id, data);
   } else {
     const newIdVal = newId();
@@ -1004,10 +1044,9 @@ async function saveAuto(id) {
   saveDB();
   closeModal();
   
-  // Aspetta che il listener Firebase aggiorni i dati
-  await new Promise(resolve => setTimeout(resolve, 300));
+  await new Promise(resolve => setTimeout(resolve, 500));
   
-  if (currentClienteId == data.clienteId) {
+  if (String(currentClienteId) === String(data.clienteId)) {
     renderSchedaCliente();
   } else {
     renderCurrent();
@@ -1101,8 +1140,16 @@ function aggiornaTotale() {
 }
 
 async function saveIntervento(id) {
+  const autoIdRaw = document.getElementById('f_autoId').value;
+  const autoIdNum = Number(autoIdRaw);
+
+  if (!autoIdRaw || isNaN(autoIdNum)) {
+    alert('⚠️ Seleziona un\'auto valida');
+    return;
+  }
+
   const data = {
-    autoId: parseInt(document.getElementById('f_autoId').value),
+    autoId: autoIdNum,
     tipo: document.getElementById('f_tipo').value,
     data: document.getElementById('f_data').value,
     km: document.getElementById('f_km').value,
@@ -1115,17 +1162,17 @@ async function saveIntervento(id) {
     prossimoKm: document.getElementById('f_prossimoKm').value,
     note: document.getElementById('f_note').value.trim()
   };
-  if (!data.autoId) { alert('Seleziona un\'auto'); return; }
-  
+
   if (id) {
-    Object.assign(db.interventi.find(x => x.id === id), data);
+    const int = db.interventi.find(x => x.id === id);
+    if (int) Object.assign(int, data);
     await firestoreSet('interventi', id, data);
   } else {
     const newIdVal = newId();
     db.interventi.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
     await firestoreSet('interventi', newIdVal, data);
   }
-  
+
   if (data.km) {
     const auto = db.auto.find(a => a.id === data.autoId);
     if (auto && (!auto.km || Number(data.km) > Number(auto.km))) {
@@ -1133,15 +1180,19 @@ async function saveIntervento(id) {
       await firestoreSet('auto', auto.id, { km: data.km });
     }
   }
-  
-   saveDB();
+
+  saveDB();
   closeModal();
-  
-  setTimeout(() => {
-    const auto = db.auto.find(a => a.id === data.autoId);
-    if (auto && currentClienteId == auto.clienteId) renderSchedaCliente();
-    else renderCurrent();
-  }, 500);
+
+  // Aspetta che Firebase sincronizzi
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  const auto = db.auto.find(a => a.id === data.autoId);
+  if (auto && String(currentClienteId) === String(auto.clienteId)) {
+    renderSchedaCliente();
+  } else {
+    renderCurrent();
+  }
 }
 
 async function deleteIntervento(id) {
