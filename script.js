@@ -817,10 +817,13 @@ async function saveCliente(id) {
     db.clienti.push(newCliente);
     await firestoreSet('clienti', newIdVal, data);
   }
-  saveDB();
+   saveDB();
   closeModal();
-  if (id && currentClienteId === id) renderSchedaCliente();
-  else renderCurrent();
+  
+  setTimeout(() => {
+    if (id && currentClienteId === id) renderSchedaCliente();
+    else renderCurrent();
+  }, 500);
 }
 
 async function deleteCliente(id) {
@@ -944,10 +947,14 @@ async function saveAuto(id) {
     db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
     await firestoreSet('auto', newIdVal, data);
   }
-  saveDB();
+   saveDB();
   closeModal();
-  if (currentClienteId === data.clienteId) renderSchedaCliente();
-  else renderCurrent();
+  
+  // Aspetta la sincronizzazione Firebase prima di renderizzare
+  setTimeout(() => {
+    if (currentClienteId === data.clienteId) renderSchedaCliente();
+    else renderCurrent();
+  }, 500);
 }
 
 async function deleteAuto(id) {
@@ -1070,11 +1077,14 @@ async function saveIntervento(id) {
     }
   }
   
-  saveDB();
+   saveDB();
   closeModal();
-  const auto = db.auto.find(a => a.id === data.autoId);
-  if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
-  else renderCurrent();
+  
+  setTimeout(() => {
+    const auto = db.auto.find(a => a.id === data.autoId);
+    if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
+    else renderCurrent();
+  }, 500);
 }
 
 async function deleteIntervento(id) {
