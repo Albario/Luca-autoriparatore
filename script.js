@@ -1454,12 +1454,12 @@ function renderListaClienti() {
 }
 
 function renderCardCliente(c, matchInfo = '') {
-const autoCount = db.auto.filter(a => a.clienteId == c.id).length;
+const autoCount = db.auto.filter(a => String(a.clienteId) === String(c.id)).length;
 const intCount = db.interventi.filter(i => {
-  const a = db.auto.find(x => x.id == i.autoId);
-  return a && a.clienteId == c.id;
+  const a = db.auto.find(x => String(x.id) === String(i.autoId));
+  return a && String(a.clienteId) === String(c.id);
 }).length;
-const prevCount = db.preventivi.filter(p => p.clienteId == c.id).length;
+const prevCount = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).length;
   const ultimaAuto = db.auto.filter(a => a.clienteId === c.id).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
   return `
     <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${c.id})">
@@ -1502,15 +1502,14 @@ function renderSchedaCliente() {
   const v = document.getElementById('view-scheda-cliente');
   const c = db.clienti.find(x => x.id === currentClienteId);
   if (!c) { tornaAListaClienti(); return; }
-  const autoList = db.auto.filter(a => a.clienteId == c.id);
+ const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
 
-    console.log('🔍 Debug scheda cliente:', {
-    clienteId: c.id,
-    tipoId: typeof c.id,
-    totaleAuto: db.auto.length,
-    autoFiltrate: autoList.length,
-    autoDetails: db.auto.map(a => ({ id: a.id, clienteId: a.clienteId, tipo: typeof a.clienteId }))
-  });
+   console.log('🔍 Debug auto:', db.auto.map(a => ({
+  id: a.id,
+  clienteId: a.clienteId,
+  tipoClienteId: typeof a.clienteId,
+  match: String(a.clienteId) === String(c.id)
+})));
   
   const tuttiInterventi = [];
   autoList.forEach(a => {
@@ -1601,7 +1600,7 @@ function renderSubTabStorico(c, interventi) {
   const autoList = db.auto.filter(a => a.clienteId === c.id);
   const filterAuto = window.filterAutoCliente || 'tutti';
   let filtered = interventi;
-  if (filterAuto !== 'tutti') filtered = interventi.filter(i => i.auto.id == filterAuto);
+ if (filterAuto !== 'tutti') filtered = interventi.filter(i => String(i.auto.id) === String(filterAuto));
   return `
     ${autoList.length > 1 ? `
       <div class="toolbar">
