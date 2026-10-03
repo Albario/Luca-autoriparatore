@@ -6,6 +6,10 @@
   <meta name="theme-color" content="#1e40af">
   <title>🔧 Gestione Officina</title>
   
+  <!-- Favicon PNG -->
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
+  
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   
@@ -26,11 +30,14 @@
 </div>
 
 <!-- SCHERMATA CARICAMENTO -->
-<div id="loadingScreen" class="login-screen" style="display:none">
+<div id="loginScreen" class="login-screen">
   <div class="login-box">
-    <div class="login-logo">⏳</div>
-    <h1>Caricamento dati...</h1>
-    <p class="login-sub">Connessione al cloud in corso</p>
+    <img src="logo.png" alt="Logo" class="login-logo-img">
+    <h1>Gestione Officina</h1>
+    <p class="login-sub">Inserisci la password per accedere</p>
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') tentaLogin()">
+    <button class="btn btn-primary btn-block" onclick="tentaLogin()">🔓 Accedi</button>
+    <div id="loginError" class="login-error"></div>
   </div>
 </div>
 
@@ -38,10 +45,15 @@
 <div id="appContainer" style="display:none">
 
 <header>
-  <h1>🔧 Gestione Officina</h1>
-  <div class="sub">
-    <span id="headerSub">Caricamento...</span>
-    <span id="syncStatus" class="sync-status">🟢 Online</span>
+  <div class="header-content">
+    <img src="logo.png" alt="Logo" class="header-logo-img">
+    <div class="header-text">
+      <h1>Gestione Officina</h1>
+      <div class="sub">
+        <span id="headerSub">Caricamento...</span>
+        <span id="syncStatus" class="sync-status">🟢 Online</span>
+      </div>
+    </div>
   </div>
 </header>
 
