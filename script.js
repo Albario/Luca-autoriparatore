@@ -1,4 +1,39 @@
 // ============================================================
+// 🎨 LOGO SVG (riutilizzabile in header e PDF)
+// ============================================================
+function getLogoSVG(size = 40) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${size}" height="${size}">
+    <defs>
+      <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#1e3a8a;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <circle cx="32" cy="32" r="30" fill="url(#logoGrad)" stroke="white" stroke-width="2"/>
+    <!-- Chiave inglese stilizzata -->
+    <path d="M20 22 L28 30 L40 18" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M28 30 L20 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M28 30 L36 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="40" cy="18" r="4" fill="white"/>
+    <circle cx="20" cy="38" r="3" fill="white"/>
+    <circle cx="36" cy="38" r="3" fill="white"/>
+  </svg>`;
+}
+
+// Logo in versione bianca per sfondi scuri (header)
+function getLogoWhiteSVG(size = 40) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${size}" height="${size}">
+    <circle cx="32" cy="32" r="30" fill="none" stroke="white" stroke-width="2"/>
+    <path d="M20 22 L28 30 L40 18" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M28 30 L20 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M28 30 L36 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="40" cy="18" r="4" fill="white"/>
+    <circle cx="20" cy="38" r="3" fill="white"/>
+    <circle cx="36" cy="38" r="3" fill="white"/>
+  </svg>`;
+}
+
+// ============================================================
 // 🔥 CONFIGURAZIONE FIREBASE
 // ⚠️ SOSTITUISCI con la configurazione che hai copiato da Firebase
 // ============================================================
@@ -1179,32 +1214,97 @@ function generatePDF(id) {
   if (!p) return;
   const cliente = db.clienti.find(c => String(c.id) === String(p.clienteId));
   const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
-  const totale = p.voci.reduce((sum, v) => sum + (v.quantita * v.prezzo), 0);
+  const totale = p.voci.reduce((sum, v) => sum + ((Number(v.quantita) || 0) * (Number(v.prezzo) || 0)), 0);
+  
   const html = `
     <div class="preventivo-doc">
-      <h1>PREVENTIVO N. ${String(p.id).padStart(4, '0')}</h1>
-      <p><strong>Data:</strong> ${fmtDate(p.data)}${p.validoFino ? ` | <strong>Valido fino al:</strong> ${fmtDate(p.validoFino)}` : ''}</p>
-      <h3 style="margin-top:20px">Cliente</h3>
-      <p><strong>${escapeHtml(cliente.nome + ' ' + cliente.cognome)}</strong></p>
-      ${cliente.telefono ? `<p>Tel: ${escapeHtml(cliente.telefono)}</p>` : ''}
-      ${cliente.email ? `<p>Email: ${escapeHtml(cliente.email)}</p>` : ''}
-      ${cliente.indirizzo ? `<p>${escapeHtml(cliente.indirizzo)}</p>` : ''}
-      ${auto ? `<h3 style="margin-top:20px">Veicolo</h3><p>${escapeHtml(auto.marca + ' ' + auto.modello)} - Targa: <strong>${escapeHtml(auto.targa)}</strong></p>` : ''}
+      <!-- HEADER CON LOGO PNG -->
+      <div style="display:flex; align-items:center; gap:16px; padding-bottom:20px; border-bottom:3px solid #1e40af; margin-bottom:24px;">
+        <img src="logo.png" alt="Logo" style="width:80px; height:80px; object-fit:contain;">
+        <div style="flex:1;">
+          <h1 style="margin:0; color:#1e40af; font-size:1.8rem;">PREVENTIVO</h1>
+          <p style="margin:4px 0 0 0; color:#666; font-size:0.9rem;">N. ${String(p.id).padStart(4, '0')} del ${fmtDate(p.data)}</p>
+        </div>
+        <div style="text-align:right; font-size:0.85rem; color:#666;">
+          <div><strong>Gestione Officina</strong></div>
+          <div>Documento commerciale</div>
+        </div>
+      </div>
+      
+      <!-- INFO PREVENTIVO -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;">
+        <div>
+          <h3 style="color:#1e40af; margin-bottom:8px; font-size:1rem;">👤 Cliente</h3>
+          <p style="margin:4px 0;"><strong style="font-size:1.05rem;">${escapeHtml(cliente.nome + ' ' + cliente.cognome)}</strong></p>
+          ${cliente.telefono ? `<p style="margin:2px 0;">📞 ${escapeHtml(cliente.telefono)}</p>` : ''}
+          ${cliente.email ? `<p style="margin:2px 0;">✉️ ${escapeHtml(cliente.email)}</p>` : ''}
+          ${cliente.indirizzo ? `<p style="margin:2px 0;">🏠 ${escapeHtml(cliente.indirizzo)}</p>` : ''}
+        </div>
+        ${auto ? `
+          <div>
+            <h3 style="color:#1e40af; margin-bottom:8px; font-size:1rem;">🚗 Veicolo</h3>
+            <p style="margin:4px 0;"><strong>${escapeHtml(auto.marca + ' ' + auto.modello)}</strong></p>
+            <p style="margin:2px 0;">Targa: <strong>${escapeHtml(auto.targa)}</strong></p>
+            ${auto.anno ? `<p style="margin:2px 0;">Anno: ${escapeHtml(auto.anno)}</p>` : ''}
+            ${auto.telaio ? `<p style="margin:2px 0; font-size:0.85rem;">VIN: ${escapeHtml(auto.telaio)}</p>` : ''}
+          </div>
+        ` : ''}
+      </div>
+      
+      ${p.validoFino ? `<p style="background:#fef3c7; padding:10px; border-radius:6px; margin-bottom:20px;"><strong> Valido fino al:</strong> ${fmtDate(p.validoFino)}</p>` : ''}
+      
+      <!-- TABELLA VOCI -->
       <table>
-        <thead><tr><th>Descrizione</th><th>Qtà</th><th>Prezzo</th><th>Totale</th></tr></thead>
+        <thead>
+          <tr>
+            <th style="width:50%;">Descrizione</th>
+            <th style="width:10%;">Qtà</th>
+            <th style="width:20%;">Prezzo unit.</th>
+            <th style="width:20%;">Totale</th>
+          </tr>
+        </thead>
         <tbody>
-          ${p.voci.map(v => `<tr><td>${escapeHtml(v.descrizione)}</td><td>${v.quantita}</td><td>${fmtEuro(v.prezzo)}</td><td>${fmtEuro(v.quantita * v.prezzo)}</td></tr>`).join('')}
+          ${p.voci.map(v => `
+            <tr>
+              <td>${escapeHtml(v.descrizione)}</td>
+              <td style="text-align:center;">${v.quantita}</td>
+              <td style="text-align:right;">${fmtEuro(v.prezzo)}</td>
+              <td style="text-align:right;"><strong>${fmtEuro((Number(v.quantita) || 0) * (Number(v.prezzo) || 0))}</strong></td>
+            </tr>
+          `).join('')}
         </tbody>
       </table>
-      <p class="total" style="text-align:right; margin-top:20px">TOTALE: ${fmtEuro(totale)}</p>
-      ${p.note ? `<p style="margin-top:20px"><strong>Note:</strong><br>${escapeHtml(p.note).replace(/\n/g,'<br>')}</p>` : ''}
+      
+      <!-- TOTALE -->
+      <div style="text-align:right; margin-top:20px; padding:16px; background:#f0f9ff; border-radius:8px; border:2px solid #1e40af;">
+        <div style="font-size:0.9rem; color:#666;">TOTALE COMPLESSIVO</div>
+        <div style="font-size:1.8rem; font-weight:700; color:#1e40af;">${fmtEuro(totale)}</div>
+      </div>
+      
+      ${p.note ? `<div style="margin-top:24px; padding:12px; background:#f9fafb; border-left:4px solid #1e40af; border-radius:4px;"><strong>Note:</strong><br>${escapeHtml(p.note).replace(/\n/g,'<br>')}</div>` : ''}
+      
+      <!-- FOOTER -->
+      <div style="margin-top:40px; padding-top:16px; border-top:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; color:#666;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <img src="logo.png" alt="Logo" style="width:24px; height:24px; object-fit:contain;">
+          <span>Gestione Officina</span>
+        </div>
+        <div>Documento generato il ${new Date().toLocaleString('it-IT')}</div>
+      </div>
     </div>
   `;
+  
   const template = document.getElementById('preventivoTemplate');
   template.innerHTML = html;
   template.style.display = 'block';
+  
   setTimeout(() => {
-    html2canvas(template.querySelector('.preventivo-doc'), { scale: 2, useCORS: true, logging: false }).then(canvas => {
+    html2canvas(template.querySelector('.preventivo-doc'), { 
+      scale: 2, 
+      useCORS: true, 
+      logging: false,
+      allowTaint: true  // Permette di caricare immagini locali
+    }).then(canvas => {
       const imgData = canvas.toDataURL('image/png');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF('p', 'mm', 'a4');
@@ -1214,8 +1314,12 @@ function generatePDF(id) {
       pdf.save(`preventivo_${cliente.cognome}_${p.data}.pdf`);
       template.style.display = 'none';
       template.innerHTML = '';
+    }).catch(err => {
+      console.error('Errore generazione PDF:', err);
+      alert('❌ Errore nella generazione del PDF: ' + err.message);
+      template.style.display = 'none';
     });
-  }, 100);
+  }, 500);  // Aumentato a 500ms per dare tempo al PNG di caricarsi
 }
 
 // ============================================================
