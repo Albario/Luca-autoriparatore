@@ -720,25 +720,59 @@ async function saveCliente(id) {
 }
 
 async function deleteCliente(id) {
-  if (!confirm('Eliminare il cliente e TUTTI i dati collegati?')) return;
-  const autoIds = db.auto.filter(a => String(a.clienteId) === String(id)).map(a => a.id);
-  for (const int of db.interventi.filter(i => autoIds.includes(i.autoId))) await firestoreDelete('interventi', int.id);
-  for (const p of db.preventivi.filter(p => String(p.clienteId) === String(id))) await firestoreDelete('preventivi', p.id);
-  for (const a of db.auto.filter(a => String(a.clienteId) === String(id))) await firestoreDelete('auto', a.id);
-  await firestoreDelete('clienti', id);
-  
-  db.interventi = db.interventi.filter(i => !autoIds.includes(i.autoId));
-  db.preventivi = db.preventivi.filter(p => String(p.clienteId) !== String(id));
-  db.auto = db.auto.filter(a => String(a.clienteId) !== String(id));
-  db.clienti = db.clienti.filter(c => c.id !== id);
-  
-  saveDB();
-  closeModal();
-  if (String(currentClienteId) === String(id)) {
+  if (!confirm('⚠️ Eliminare il cliente e TUTTI i dati collegati (auto, interventi, preventivi)?\nQuesta azione non può essere annullata.')) return;
+
+  setSyncStatus('syncing', '🔄 Eliminazione in corso...');
+
+  try {
+    // 1. Trova e elimina le AUTO di questo cliente direttamente su Firebase
+    // Usiamo una query diretta per essere sicuri di prenderle tutte, anche quelle con ID stringa o numero
+    const autoSnap = await dbFirestore.collection('auto').get();
+    const autoDaEliminare = autoSnap.docs.filter(doc => String(doc.data().clienteId) === String(id));
+    
+    const autoPromises = autoDaEliminare.map(async (doc) => {
+      const autoId = doc.id;
+      // Elimina anche gli interventi collegati a questa specifica auto
+      const intSnap = await dbFirestore.collection('interventi').get();
+      const intDaEliminare = intSnap.docs.filter(d => String(d.data().autoId) === String(autoId));
+      const intPromises = intDaEliminare.map(d => d.ref.delete());
+      await Promise.all(intPromises);
+      
+      // Elimina l'auto
+      return doc.ref.delete();
+    });
+    await Promise.all(autoPromises);
+
+    // 2. Elimina i PREVENTIVI di questo cliente
+    const prevSnap = await dbFirestore.collection('preventivi').get();
+    const prevDaEliminare = prevSnap.docs.filter(doc => String(doc.data().clienteId) === String(id));
+    const prevPromises = prevDaEliminare.map(doc => doc.ref.delete());
+    await Promise.all(prevPromises);
+
+    // 3. Elimina il CLIENTE
+    await dbFirestore.collection('clienti').doc(String(id)).delete();
+
+    // 4. Pulisci la cache locale e aggiorna l'interfaccia
+    db.clienti = db.clienti.filter(c => c.id !== id);
+    db.auto = db.auto.filter(a => String(a.clienteId) !== String(id));
+    db.interventi = db.interventi.filter(i => {
+      const auto = db.auto.find(a => a.id === i.autoId);
+      return auto && String(auto.clienteId) === String(id) ? false : true;
+    });
+    db.preventivi = db.preventivi.filter(p => String(p.clienteId) !== String(id));
+    
+    salvaCacheLocale();
+    updateHeader();
+
+    alert('✅ Cliente e tutti i dati collegati eliminati con successo.');
     currentClienteId = null;
     switchToTab('clienti');
-  } else {
-    renderCurrent();
+
+  } catch (err) {
+    console.error('Errore durante l\'eliminazione:', err);
+    alert('❌ Errore durante l\'eliminazione: ' + err.message);
+  } finally {
+    setSyncStatus('online', '🟢 Online');
   }
 }
 
