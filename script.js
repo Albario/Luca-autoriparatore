@@ -199,7 +199,11 @@ async function riparaDatiInvalidi() {
 function avviaListenerTempoReale() {
   const listen = (collection, onUpdate, normalizeFn) => {
     return dbFirestore.collection(collection).onSnapshot(
+      { includeMetadataChanges: true },
       snapshot => {
+        // Ignora i dati dalla cache locale, usa solo i dati dal server
+        if (snapshot.metadata.fromCache) return;
+        
         const data = snapshot.docs.map(doc => {
           const item = { id: Number(doc.id), ...doc.data() };
           return normalizeFn ? normalizeFn(item) : item;
@@ -719,22 +723,30 @@ async function saveCliente(id) {
   };
   if (!data.nome && !data.cognome) { alert('Inserisci almeno nome o cognome'); return; }
   
-  if (id) {
-    Object.assign(db.clienti.find(x => x.id === id), data);
-    await firestoreSet('clienti', id, data);
-  } else {
-    const newIdVal = newId();
-    db.clienti.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
-    await firestoreSet('clienti', newIdVal, data);
+  try {
+    if (id) {
+      const c = db.clienti.find(x => x.id === id);
+      if (c) Object.assign(c, data);
+      await firestoreSet('clienti', id, data);
+    } else {
+      const newIdVal = newId();
+      db.clienti.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      await firestoreSet('clienti', newIdVal, data);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    saveDB();
+    closeModal();
+    
+    setTimeout(() => {
+      if (id && String(currentClienteId) === String(id)) renderSchedaCliente();
+      else renderCurrent();
+    }, 100);
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
   }
-  saveDB();
-  closeModal();
-  setTimeout(() => {
-    if (id && String(currentClienteId) === String(id)) renderSchedaCliente();
-    else renderCurrent();
-  }, 500);
 }
-
 async function deleteCliente(id) {
   if (!confirm('⚠️ Eliminare il cliente e TUTTI i dati collegati (auto, interventi, preventivi)?\nQuesta azione non può essere annullata.')) return;
 
@@ -847,14 +859,21 @@ async function saveAuto(id) {
   
   try {
     if (id) {
+      // Aggiorna localmente subito (optimistic update)
+      const auto = db.auto.find(x => x.id === id);
+      if (auto) Object.assign(auto, data);
+      // Scrivi su Firebase
       await firestoreSet('auto', id, data);
     } else {
       const newIdVal = newId();
+      // Aggiungi localmente subito (optimistic update)
+      db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      // Scrivi su Firebase
       await firestoreSet('auto', newIdVal, data);
     }
     
-    // Aspetta che Firebase sincronizzi
-    await new Promise(resolve => setTimeout(resolve, 900));
+    // Aspetta che Firebase propaghi i dati al server
+    await new Promise(resolve => setTimeout(resolve, 1500));
     
     saveDB();
     closeModal();
@@ -969,32 +988,41 @@ async function saveIntervento(id) {
     note: document.getElementById('f_note').value.trim()
   };
 
-  if (id) {
-    const int = db.interventi.find(x => x.id === id);
-    if (int) Object.assign(int, data);
-    await firestoreSet('interventi', id, data);
-  } else {
-    const newIdVal = newId();
-    db.interventi.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
-    await firestoreSet('interventi', newIdVal, data);
-  }
-
-  if (data.km) {
-    const auto = db.auto.find(a => a.id === data.autoId);
-    if (auto && (!auto.km || Number(data.km) > Number(auto.km))) {
-      auto.km = data.km;
-      await firestoreSet('auto', auto.id, { km: data.km });
+  try {
+    if (id) {
+      const int = db.interventi.find(x => x.id === id);
+      if (int) Object.assign(int, data);
+      await firestoreSet('interventi', id, data);
+    } else {
+      const newIdVal = newId();
+      db.interventi.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      await firestoreSet('interventi', newIdVal, data);
     }
+
+    if (data.km) {
+      const auto = db.auto.find(a => a.id === data.autoId);
+      if (auto && (!auto.km || Number(data.km) > Number(auto.km))) {
+        auto.km = data.km;
+        await firestoreSet('auto', auto.id, { ...auto, km: data.km });
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    saveDB();
+    closeModal();
+
+    const auto = db.auto.find(a => a.id === data.autoId);
+    if (auto && String(currentClienteId) === String(auto.clienteId)) {
+      renderSchedaCliente();
+    } else {
+      renderCurrent();
+    }
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
   }
-
-  saveDB();
-  closeModal();
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  const auto = db.auto.find(a => a.id === data.autoId);
-  if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
-  else renderCurrent();
 }
+
 
 async function deleteIntervento(id) {
   if (!confirm('Eliminare l\'intervento?')) return;
@@ -1112,18 +1140,27 @@ async function savePreventivo(id) {
   if (!p.clienteId) { alert('Seleziona un cliente'); return; }
   if (!p.voci.length || p.voci.every(v => !v.descrizione)) { alert('Aggiungi almeno una voce'); return; }
   
-  if (id) {
-    Object.assign(db.preventivi.find(x => x.id === id), p);
-    await firestoreSet('preventivi', id, p);
-  } else {
-    const newIdVal = newId();
-    db.preventivi.push({ id: newIdVal, ...p, createdAt: new Date().toISOString() });
-    await firestoreSet('preventivi', newIdVal, p);
+  try {
+    if (id) {
+      const existing = db.preventivi.find(x => x.id === id);
+      if (existing) Object.assign(existing, p);
+      await firestoreSet('preventivi', id, p);
+    } else {
+      const newIdVal = newId();
+      db.preventivi.push({ id: newIdVal, ...p, createdAt: new Date().toISOString() });
+      await firestoreSet('preventivi', newIdVal, p);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    saveDB();
+    closeModal();
+    
+    if (String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
+    else renderCurrent();
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
   }
-  saveDB();
-  closeModal();
-  if (String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
-  else renderCurrent();
 }
 
 async function deletePreventivo(id) {
