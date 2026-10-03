@@ -20,10 +20,9 @@ const PASSWORD_HASH = 'a3a3e110f5bce3211d1d265f3ace7fab88dce16019db6062082347f8e
 // ============================================================
 // FIREBASE INIT
 // ============================================================
-let dbFirestore; // database Firestore
-let unsubscribers = []; // listener per aggiornamenti in tempo reale
+let dbFirestore;
+let unsubscribers = [];
 
-// Carica Firebase da CDN (versione compat, più semplice)
 const firebaseScript = document.createElement('script');
 firebaseScript.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js';
 firebaseScript.onload = () => {
@@ -33,7 +32,6 @@ firebaseScript.onload = () => {
     try {
       firebase.initializeApp(firebaseConfig);
       dbFirestore = firebase.firestore();
-      // Abilita persistenza offline (funziona anche senza internet)
       dbFirestore.enablePersistence().catch(err => {
         console.warn('Persistenza offline non disponibile:', err);
       });
@@ -141,32 +139,20 @@ async function caricaDatiDaCloud() {
       dbFirestore.collection('config').doc('ids').get()
     ]);
     
-    db.clienti = clientiSnap.docs.map(doc => ({ 
-      id: Number(doc.id), 
-      ...doc.data() 
-    }));
+    db.clienti = clientiSnap.docs.map(doc => ({ id: Number(doc.id), ...doc.data() }));
     
-    // Ripara auto con clienteId NaN
     db.auto = autoSnap.docs.map(doc => {
       const data = doc.data();
       let cid = Number(data.clienteId);
-      if (isNaN(cid)) cid = 0; // fallback
-      return { 
-        id: Number(doc.id), 
-        ...data,
-        clienteId: cid
-      };
+      if (isNaN(cid)) cid = 0;
+      return { id: Number(doc.id), ...data, clienteId: cid };
     });
     
     db.interventi = interventiSnap.docs.map(doc => {
       const data = doc.data();
       let aid = Number(data.autoId);
       if (isNaN(aid)) aid = 0;
-      return { 
-        id: Number(doc.id), 
-        ...data,
-        autoId: aid
-      };
+      return { id: Number(doc.id), ...data, autoId: aid };
     });
     
     db.preventivi = preventiviSnap.docs.map(doc => {
@@ -175,19 +161,11 @@ async function caricaDatiDaCloud() {
       if (isNaN(cid)) cid = 0;
       let aid = data.autoId ? Number(data.autoId) : null;
       if (aid !== null && isNaN(aid)) aid = null;
-      return { 
-        id: Number(doc.id), 
-        ...data,
-        clienteId: cid,
-        autoId: aid
-      };
+      return { id: Number(doc.id), ...data, clienteId: cid, autoId: aid };
     });
     
     db.nextId = configSnap.exists ? (Number(configSnap.data().nextId) || 1) : 1;
-    
-    // 🔧 RIPARAZIONE AUTOMATICA: correggi auto con clienteId invalido
     await riparaDatiInvalidi();
-    
     setSyncStatus('online', '🟢 Online');
   } catch (err) {
     console.error('Errore caricamento:', err);
@@ -199,21 +177,14 @@ async function caricaDatiDaCloud() {
   }
 }
 
-// 🔧 Funzione di riparazione
 async function riparaDatiInvalidi() {
   const autoDaRiparare = db.auto.filter(a => isNaN(a.clienteId) || a.clienteId === 0 || a.clienteId === null);
-  
   if (autoDaRiparare.length > 0) {
     console.log('🔧 Riparazione:', autoDaRiparare.length, 'auto con clienteId invalido');
-    
     for (const auto of autoDaRiparare) {
-      // Cerca il cliente corretto (se c'è un solo cliente, usa quello)
       if (db.clienti.length === 1) {
         auto.clienteId = db.clienti[0].id;
-        await firestoreSet('auto', auto.id, { 
-          ...auto, 
-          clienteId: auto.clienteId 
-        });
+        await firestoreSet('auto', auto.id, { ...auto, clienteId: auto.clienteId });
         console.log('✅ Auto riparata:', auto.marca, auto.modello, '→ cliente', auto.clienteId);
       } else {
         console.warn('⚠️ Auto senza cliente valido:', auto.marca, auto.modello, '- assegnala manualmente');
@@ -223,7 +194,7 @@ async function riparaDatiInvalidi() {
 }
 
 // ============================================================
-// LISTENER TEMPO REALE (aggiornamenti automatici)
+// LISTENER TEMPO REALE
 // ============================================================
 function avviaListenerTempoReale() {
   const listen = (collection, onUpdate, normalizeFn) => {
@@ -245,21 +216,18 @@ function avviaListenerTempoReale() {
   };
   
   unsubscribers.push(listen('clienti', data => db.clienti = data));
-  
   unsubscribers.push(listen('auto', data => db.auto = data, item => {
     let cid = Number(item.clienteId);
     if (isNaN(cid)) cid = 0;
     item.clienteId = cid;
     return item;
   }));
-  
   unsubscribers.push(listen('interventi', data => db.interventi = data, item => {
     let aid = Number(item.autoId);
     if (isNaN(aid)) aid = 0;
     item.autoId = aid;
     return item;
   }));
-  
   unsubscribers.push(listen('preventivi', data => db.preventivi = data, item => {
     let cid = Number(item.clienteId);
     if (isNaN(cid)) cid = 0;
@@ -271,7 +239,6 @@ function avviaListenerTempoReale() {
     }
     return item;
   }));
-  
   unsubscribers.push(
     dbFirestore.collection('config').doc('ids').onSnapshot(doc => {
       if (doc.exists) db.nextId = Number(doc.data().nextId) || 1;
@@ -286,48 +253,26 @@ async function saveDB() {
   setSyncStatus('syncing', '🔄 Salvataggio...');
   salvaCacheLocale();
   updateHeader();
-  // Il rendering viene fatto dal listener in tempo reale
   setSyncStatus('online', '🟢 Online');
 }
 
 function salvaCacheLocale() {
-  try {
-    localStorage.setItem('officina_db_cache', JSON.stringify(db));
-  } catch(e) {}
+  try { localStorage.setItem('officina_db_cache', JSON.stringify(db)); } catch(e) {}
 }
 
 async function firestoreSet(collection, id, data) {
-  try {
-    await dbFirestore.collection(collection).doc(String(id)).set(data);
-  } catch (err) {
-    console.error('Errore salvataggio:', err);
-    setSyncStatus('error', '❌ Errore salvataggio');
-  }
+  try { await dbFirestore.collection(collection).doc(String(id)).set(data); } 
+  catch (err) { console.error('Errore salvataggio:', err); setSyncStatus('error', '❌ Errore salvataggio'); }
 }
 
 async function firestoreDelete(collection, id) {
-  try {
-    await dbFirestore.collection(collection).doc(String(id)).delete();
-  } catch (err) {
-    console.error('Errore eliminazione:', err);
-  }
-}
-
-async function incrementaNextId() {
-  const newId = db.nextId;
-  db.nextId++;
-  try {
-    await dbFirestore.collection('config').doc('ids').set({ nextId: db.nextId });
-  } catch (err) {
-    console.error('Errore nextId:', err);
-  }
-  return newId;
+  try { await dbFirestore.collection(collection).doc(String(id)).delete(); } 
+  catch (err) { console.error('Errore eliminazione:', err); }
 }
 
 function newId() {
   const id = db.nextId;
   db.nextId++;
-  // Aggiorna nextId su Firebase in background
   dbFirestore.collection('config').doc('ids').set({ nextId: db.nextId }).catch(() => {});
   return id;
 }
@@ -339,14 +284,8 @@ function setSyncStatus(type, text) {
   el.textContent = text;
 }
 
-// Rileva stato online/offline
-window.addEventListener('online', () => {
-  setSyncStatus('online', '🟢 Online');
-  caricaDatiDaCloud();
-});
-window.addEventListener('offline', () => {
-  setSyncStatus('offline', '⚫ Offline');
-});
+window.addEventListener('online', () => { setSyncStatus('online', '🟢 Online'); caricaDatiDaCloud(); });
+window.addEventListener('offline', () => { setSyncStatus('offline', '⚫ Offline'); });
 
 // ============================================================
 // UTIL
@@ -420,10 +359,6 @@ document.getElementById('modal').addEventListener('click', e => {
   if (e.target.id === 'modal') closeModal();
 });
 
-
-// ============================================================
-// 🎤 RICONOSCIMENTO VOCALE
-// ============================================================
 // ============================================================
 // 🎤 RICONOSCIMENTO VOCALE
 // ============================================================
@@ -434,13 +369,9 @@ let currentRecognitionAuto = null;
 let isStoppingCliente = false;
 let isStoppingAuto = false;
 
-
 function checkVoiceSupport() {
   if (!SpeechRecognition) {
-    return `<div class="voice-not-supported">
-      ⚠️ Riconoscimento vocale non supportato da questo browser. 
-      Usa Chrome, Edge o Safari (iOS 14.5+)
-    </div>`;
+    return `<div class="voice-not-supported">⚠️ Riconoscimento vocale non supportato da questo browser. Usa Chrome, Edge o Safari (iOS 14.5+)</div>`;
   }
   return '';
 }
@@ -454,7 +385,6 @@ function startVoice(targetId, isTextarea = false) {
     alert('⚠️ Il tuo browser non supporta il riconoscimento vocale.\nUsa Chrome, Edge o Safari su iPhone.');
     return;
   }
-
   const recognition = new SpeechRecognition();
   recognition.lang = 'it-IT';
   recognition.interimResults = false;
@@ -471,26 +401,17 @@ function startVoice(targetId, isTextarea = false) {
     const text = e.results[0][0].transcript;
     const target = document.getElementById(targetId);
     if (target) {
-      if (isTextarea) {
-        target.value = target.value ? (target.value + ' ' + text) : text;
-      } else {
-        target.value = text;
-      }
+      if (isTextarea) target.value = target.value ? (target.value + ' ' + text) : text;
+      else target.value = text;
       target.dispatchEvent(new Event('input', { bubbles: true }));
     }
   };
 
   recognition.onerror = (e) => {
-    console.error('Errore voce:', e.error);
-    if (e.error === 'not-allowed') {
-      alert('⚠️ Permesso microfono negato.\nVai nelle impostazioni del browser e consenti l\'accesso al microfono.');
-    } else if (e.error === 'no-speech') {
-      alert('🎤 Nessuna voce rilevata. Riprova parlando più forte.');
-    } else if (e.error === 'network') {
-      alert('⚠️ Errore di rete. Il riconoscimento vocale richiede internet.');
-    } else {
-      alert('❌ Errore: ' + e.error);
-    }
+    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato.');
+    else if (e.error === 'no-speech') alert('🎤 Nessuna voce rilevata.');
+    else if (e.error === 'network') alert('⚠️ Errore di rete.');
+    else alert('❌ Errore: ' + e.error);
   };
 
   recognition.onend = () => {
@@ -499,9 +420,8 @@ function startVoice(targetId, isTextarea = false) {
     btn.disabled = false;
   };
 
-  try {
-    recognition.start();
-  } catch(err) {
+  try { recognition.start(); } 
+  catch(err) {
     btn.innerHTML = originalText;
     btn.classList.remove('listening');
     btn.disabled = false;
@@ -509,30 +429,19 @@ function startVoice(targetId, isTextarea = false) {
   }
 }
 
-// ========== DETTATO RAPIDO CLIENTE ==========
 function startVoiceClienteRapido() {
-  if (!SpeechRecognition) {
-    alert('⚠️ Riconoscimento vocale non supportato.\nUsa Chrome o Edge.');
-    return;
-  }
-
-  if (currentRecognitionCliente) {
-    stopVoiceClienteRapido();
-    return;
-  }
+  if (!SpeechRecognition) return alert('⚠️ Riconoscimento vocale non supportato.');
+  if (currentRecognitionCliente) { stopVoiceClienteRapido(); return; }
 
   const recognition = new SpeechRecognition();
   recognition.lang = 'it-IT';
   recognition.interimResults = true;
   recognition.continuous = true;
-  recognition.maxAlternatives = 1;
-
   currentRecognitionCliente = recognition;
   isStoppingCliente = false;
 
   const btn = document.getElementById('btnVoiceRapidoCliente');
   if (!btn) return;
-  
   btn.innerHTML = '🛑 STOP (clicca per terminare)';
   btn.classList.add('listening');
 
@@ -547,8 +456,7 @@ function startVoiceClienteRapido() {
   previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto... parla ora</div>';
 
   recognition.onresult = (e) => {
-    let interim = '';
-    finalText = '';
+    let interim = ''; finalText = '';
     for (let i = 0; i < e.results.length; i++) {
       if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
       else interim += e.results[i][0].transcript;
@@ -556,33 +464,20 @@ function startVoiceClienteRapido() {
     previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "🛑 STOP" quando hai finito</div>`;
   };
 
-  recognition.onerror = (e) => {
-    console.error('Errore voce:', e.error);
-    if (e.error === 'not-allowed') {
-      alert('⚠️ Permesso microfono negato');
-    } else if (e.error === 'aborted') {
-      // Ignora
-    }
-  };
+  recognition.onerror = (e) => { if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato'); };
 
   recognition.onend = () => {
     const wasStopping = isStoppingCliente;
     currentRecognitionCliente = null;
     isStoppingCliente = false;
-    
     btn.innerHTML = '🗣️ Dettato rapido cliente';
     btn.classList.remove('listening');
-    
-    if (wasStopping && finalText.trim()) {
-      parseAndFillCliente(finalText);
-    } else {
-      previewDiv.innerHTML = '';
-    }
+    if (wasStopping && finalText.trim()) parseAndFillCliente(finalText);
+    else if (previewDiv) previewDiv.innerHTML = '';
   };
 
-  try { 
-    recognition.start(); 
-  } catch(err) { 
+  try { recognition.start(); } 
+  catch(err) { 
     alert('Errore microfono: ' + err.message);
     btn.innerHTML = '🗣️ Dettato rapido cliente';
     btn.classList.remove('listening');
@@ -592,19 +487,11 @@ function startVoiceClienteRapido() {
 
 function stopVoiceClienteRapido() {
   if (!currentRecognitionCliente) return;
-  
   isStoppingCliente = true;
-  try {
-    currentRecognitionCliente.stop();
-  } catch(err) {
-    console.error('Errore stop:', err);
-  }
-  
+  try { currentRecognitionCliente.stop(); } catch(err) {}
   setTimeout(() => {
     if (currentRecognitionCliente && isStoppingCliente) {
-      try {
-        currentRecognitionCliente.abort();
-      } catch(err) {}
+      try { currentRecognitionCliente.abort(); } catch(err) {}
     }
   }, 2000);
 }
@@ -612,23 +499,13 @@ function stopVoiceClienteRapido() {
 function parseAndFillCliente(text) {
   const result = { nome: '', cognome: '', telefono: '', email: '', indirizzo: '', note: '' };
   let t = text.toLowerCase();
-
   const phoneMatch = t.match(/(\+?\d[\d\s\-\/]{7,}\d)/);
-  if (phoneMatch) {
-    result.telefono = phoneMatch[1].replace(/\s+/g, ' ').trim();
-    t = t.replace(phoneMatch[0], '');
-  }
-
+  if (phoneMatch) { result.telefono = phoneMatch[1].replace(/\s+/g, ' ').trim(); t = t.replace(phoneMatch[0], ''); }
   const emailMatch = t.match(/[\w.-]+@[\w.-]+\.\w+/);
-  if (emailMatch) {
-    result.email = emailMatch[0];
-    t = t.replace(emailMatch[0], '');
-  }
-
+  if (emailMatch) { result.email = emailMatch[0]; t = t.replace(emailMatch[0], ''); }
   const keywords = ['nome','cognome','telefono','tel','cellulare','numero','email','mail','indirizzo','note','casa','abitazione','domicilio'];
   keywords.forEach(k => { t = t.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' '); });
   t = t.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-
   const words = t.split(' ').filter(w => w.length > 0);
   if (words.length >= 2) {
     result.nome = words[0].charAt(0).toUpperCase() + words[0].slice(1);
@@ -636,7 +513,6 @@ function parseAndFillCliente(text) {
   } else if (words.length === 1) {
     result.nome = words[0].charAt(0).toUpperCase() + words[0].slice(1);
   }
-
   showVoicePreviewCliente(result);
 }
 
@@ -652,8 +528,7 @@ function showVoicePreviewCliente(data) {
     <div style="margin-top:10px;display:flex;gap:6px">
       <button class="btn btn-primary btn-sm" onclick="applyVoiceCliente()" style="flex:1">✅ Conferma</button>
       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewCliente').innerHTML=''" style="flex:1">✏️ Modifica</button>
-    </div>
-  `;
+    </div>`;
   window._voiceClienteData = data;
 }
 
@@ -668,29 +543,19 @@ function applyVoiceCliente() {
   document.getElementById('voicePreviewCliente').innerHTML = '<div style="color:var(--success);font-weight:600">✅ Dati inseriti!</div>';
 }
 
-// ========== DETTATO RAPIDO AUTO ==========
 function startVoiceAutoRapido() {
-  if (!SpeechRecognition) {
-    alert('⚠️ Riconoscimento vocale non supportato.\nUsa Chrome o Edge.');
-    return;
-  }
-
-  if (currentRecognitionAuto) {
-    stopVoiceAutoRapido();
-    return;
-  }
+  if (!SpeechRecognition) return alert('⚠️ Riconoscimento vocale non supportato.');
+  if (currentRecognitionAuto) { stopVoiceAutoRapido(); return; }
 
   const recognition = new SpeechRecognition();
   recognition.lang = 'it-IT';
   recognition.interimResults = true;
   recognition.continuous = true;
-
   currentRecognitionAuto = recognition;
   isStoppingAuto = false;
 
   const btn = document.getElementById('btnVoiceRapidoAuto');
   if (!btn) return;
-  
   btn.innerHTML = '🛑 STOP (clicca per terminare)';
   btn.classList.add('listening');
 
@@ -713,29 +578,20 @@ function startVoiceAutoRapido() {
     previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "🛑 STOP" quando hai finito</div>`;
   };
 
-  recognition.onerror = (e) => { 
-    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato');
-    else if (e.error === 'aborted') {}
-  };
+  recognition.onerror = (e) => { if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato'); };
 
   recognition.onend = () => {
     const wasStopping = isStoppingAuto;
     currentRecognitionAuto = null;
     isStoppingAuto = false;
-    
     btn.innerHTML = '🗣️ Dettato rapido auto';
     btn.classList.remove('listening');
-    
-    if (wasStopping && finalText.trim()) {
-      parseAndFillAuto(finalText);
-    } else {
-      previewDiv.innerHTML = '';
-    }
+    if (wasStopping && finalText.trim()) parseAndFillAuto(finalText);
+    else if (previewDiv) previewDiv.innerHTML = '';
   };
 
-  try { 
-    recognition.start(); 
-  } catch(err) { 
+  try { recognition.start(); } 
+  catch(err) { 
     alert('Errore microfono: ' + err.message);
     btn.innerHTML = '🗣️ Dettato rapido auto';
     btn.classList.remove('listening');
@@ -745,19 +601,11 @@ function startVoiceAutoRapido() {
 
 function stopVoiceAutoRapido() {
   if (!currentRecognitionAuto) return;
-  
   isStoppingAuto = true;
-  try {
-    currentRecognitionAuto.stop();
-  } catch(err) {
-    console.error('Errore stop:', err);
-  }
-  
+  try { currentRecognitionAuto.stop(); } catch(err) {}
   setTimeout(() => {
     if (currentRecognitionAuto && isStoppingAuto) {
-      try {
-        currentRecognitionAuto.abort();
-      } catch(err) {}
+      try { currentRecognitionAuto.abort(); } catch(err) {}
     }
   }, 2000);
 }
@@ -765,23 +613,15 @@ function stopVoiceAutoRapido() {
 function parseAndFillAuto(text) {
   const result = { marca: '', modello: '', targa: '', anno: '', km: '' };
   let t = text.toLowerCase();
-
   const targaMatch = t.match(/\b([a-z]{2})\s*(\d{3})\s*([a-z]{2})\b/i);
-  if (targaMatch) {
-    result.targa = (targaMatch[1] + targaMatch[2] + targaMatch[3]).toUpperCase();
-    t = t.replace(targaMatch[0], '');
-  }
-
+  if (targaMatch) { result.targa = (targaMatch[1] + targaMatch[2] + targaMatch[3]).toUpperCase(); t = t.replace(targaMatch[0], ''); }
   const annoMatch = t.match(/\b(19|20)\d{2}\b/);
   if (annoMatch) { result.anno = annoMatch[0]; t = t.replace(annoMatch[0], ''); }
-
   const kmMatch = t.match(/(\d{1,6})\s*(?:km|chilometri)/i);
   if (kmMatch) { result.km = kmMatch[1]; t = t.replace(kmMatch[0], ''); }
-
   const keywords = ['marca','modello','targa','anno','km','chilometri','auto','vettura','veicolo'];
   keywords.forEach(k => { t = t.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' '); });
   t = t.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-
   const words = t.split(' ').filter(w => w.length > 1);
   if (words.length >= 2) {
     result.marca = words[0].charAt(0).toUpperCase() + words[0].slice(1);
@@ -789,7 +629,6 @@ function parseAndFillAuto(text) {
   } else if (words.length === 1) {
     result.marca = words[0].charAt(0).toUpperCase() + words[0].slice(1);
   }
-
   showVoicePreviewAuto(result);
 }
 
@@ -806,8 +645,7 @@ function showVoicePreviewAuto(data) {
     <div style="margin-top:10px;display:flex;gap:6px">
       <button class="btn btn-primary btn-sm" onclick="applyVoiceAuto()" style="flex:1">✅ Conferma</button>
       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewAuto').innerHTML=''" style="flex:1">✏️ Modifica</button>
-    </div>
-  `;
+    </div>`;
   window._voiceAutoData = data;
 }
 
@@ -825,54 +663,27 @@ function applyVoiceAuto() {
 // ============================================================
 // CLIENTI CRUD
 // ============================================================
-
-// ============================================================
-// CLIENTI CRUD
-// ============================================================
 function openClienteModal(id = null) {
   const c = id ? db.clienti.find(x => x.id === id) : { nome:'', cognome:'', telefono:'', email:'', indirizzo:'', note:'' };
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Cliente</h2>
     ${checkVoiceSupport()}
     ${!id && voiceSupported ? `
-      <button type="button" class="voice-rapido" id="btnVoiceRapidoCliente" onclick="startVoiceClienteRapido()">
-        🗣️ Dettato rapido cliente
-      </button>
-      <div class="voice-hint">
-        💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>
-        "nome Mario cognome Rossi telefono 333 1234567 email mario@esempio.it"
-      </div>
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoCliente" onclick="startVoiceClienteRapido()">🗣️ Dettato rapido cliente</button>
+      <div class="voice-hint">💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>"nome Mario cognome Rossi telefono 333 1234567 email mario@esempio.it"</div>
     ` : ''}
     <label>Nome</label>
-    <div class="input-with-voice">
-      <input id="f_nome" value="${escapeHtml(c.nome)}" placeholder="Mario">
-      ${voiceButton('f_nome')}
-    </div>
+    <div class="input-with-voice"><input id="f_nome" value="${escapeHtml(c.nome)}" placeholder="Mario">${voiceButton('f_nome')}</div>
     <label>Cognome</label>
-    <div class="input-with-voice">
-      <input id="f_cognome" value="${escapeHtml(c.cognome)}" placeholder="Rossi">
-      ${voiceButton('f_cognome')}
-    </div>
+    <div class="input-with-voice"><input id="f_cognome" value="${escapeHtml(c.cognome)}" placeholder="Rossi">${voiceButton('f_cognome')}</div>
     <label>Telefono</label>
-    <div class="input-with-voice">
-      <input id="f_telefono" value="${escapeHtml(c.telefono)}" type="tel" placeholder="+39 333 1234567">
-      ${voiceButton('f_telefono')}
-    </div>
+    <div class="input-with-voice"><input id="f_telefono" value="${escapeHtml(c.telefono)}" type="tel" placeholder="+39 333 1234567">${voiceButton('f_telefono')}</div>
     <label>Email</label>
-    <div class="input-with-voice">
-      <input id="f_email" value="${escapeHtml(c.email)}" type="email">
-      ${voiceButton('f_email')}
-    </div>
+    <div class="input-with-voice"><input id="f_email" value="${escapeHtml(c.email)}" type="email">${voiceButton('f_email')}</div>
     <label>Indirizzo</label>
-    <div class="input-with-voice">
-      <input id="f_indirizzo" value="${escapeHtml(c.indirizzo)}">
-      ${voiceButton('f_indirizzo')}
-    </div>
+    <div class="input-with-voice"><input id="f_indirizzo" value="${escapeHtml(c.indirizzo)}">${voiceButton('f_indirizzo')}</div>
     <label>Note</label>
-    <div class="input-with-voice">
-      <textarea id="f_note" rows="2">${escapeHtml(c.note)}</textarea>
-      ${voiceButton('f_note', true)}
-    </div>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(c.note)}</textarea>${voiceButton('f_note', true)}</div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="saveCliente(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-danger" onclick="deleteCliente(${id})">🗑️ Elimina</button>` : ''}
@@ -897,46 +708,33 @@ async function saveCliente(id) {
     await firestoreSet('clienti', id, data);
   } else {
     const newIdVal = newId();
-    const newCliente = { id: newIdVal, ...data, createdAt: new Date().toISOString() };
-    db.clienti.push(newCliente);
+    db.clienti.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
     await firestoreSet('clienti', newIdVal, data);
   }
-   saveDB();
+  saveDB();
   closeModal();
-  
   setTimeout(() => {
-    if (id && currentClienteId === id) renderSchedaCliente();
+    if (id && String(currentClienteId) === String(id)) renderSchedaCliente();
     else renderCurrent();
   }, 500);
 }
 
 async function deleteCliente(id) {
   if (!confirm('Eliminare il cliente e TUTTI i dati collegati?')) return;
-  const autoIds = db.auto.filter(a => a.clienteId === id).map(a => a.id);
-  
-  // Elimina interventi
-  for (const int of db.interventi.filter(i => autoIds.includes(i.autoId))) {
-    await firestoreDelete('interventi', int.id);
-  }
-  // Elimina preventivi
-  for (const p of db.preventivi.filter(p => p.clienteId === id)) {
-    await firestoreDelete('preventivi', p.id);
-  }
-  // Elimina auto
-  for (const a of db.auto.filter(a => a.clienteId === id)) {
-    await firestoreDelete('auto', a.id);
-  }
-  // Elimina cliente
+  const autoIds = db.auto.filter(a => String(a.clienteId) === String(id)).map(a => a.id);
+  for (const int of db.interventi.filter(i => autoIds.includes(i.autoId))) await firestoreDelete('interventi', int.id);
+  for (const p of db.preventivi.filter(p => String(p.clienteId) === String(id))) await firestoreDelete('preventivi', p.id);
+  for (const a of db.auto.filter(a => String(a.clienteId) === String(id))) await firestoreDelete('auto', a.id);
   await firestoreDelete('clienti', id);
   
   db.interventi = db.interventi.filter(i => !autoIds.includes(i.autoId));
-  db.preventivi = db.preventivi.filter(p => p.clienteId !== id);
-  db.auto = db.auto.filter(a => a.clienteId !== id);
+  db.preventivi = db.preventivi.filter(p => String(p.clienteId) !== String(id));
+  db.auto = db.auto.filter(a => String(a.clienteId) !== String(id));
   db.clienti = db.clienti.filter(c => c.id !== id);
   
   saveDB();
   closeModal();
-  if (currentClienteId === id) {
+  if (String(currentClienteId) === String(id)) {
     currentClienteId = null;
     switchToTab('clienti');
   } else {
@@ -949,59 +747,30 @@ async function deleteCliente(id) {
 // ============================================================
 function openAutoModal(id = null, prefillClienteId = null) {
   const a = id ? db.auto.find(x => x.id === id) : { marca:'', modello:'', targa:'', telaio:'', anno:'', km:'', clienteId: prefillClienteId || currentClienteId || '', note:'' };
-  const opts = db.clienti.map(c => `<option value="${c.id}" ${c.id == a.clienteId ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
+  const opts = db.clienti.map(c => `<option value="${c.id}" ${String(c.id) === String(a.clienteId) ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuova'} Auto</h2>
     ${checkVoiceSupport()}
     ${!id && voiceSupported ? `
-      <button type="button" class="voice-rapido" id="btnVoiceRapidoAuto" onclick="startVoiceAutoRapido()">
-        🗣️ Dettato rapido auto
-      </button>
-      <div class="voice-hint">
-        💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>
-        "marca Fiat modello Panda targa AB 123 CD anno 2018 chilometri 85000"
-      </div>
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoAuto" onclick="startVoiceAutoRapido()">🗣️ Dettato rapido auto</button>
+      <div class="voice-hint">💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>"marca Fiat modello Panda targa AB 123 CD anno 2018 chilometri 85000"</div>
     ` : ''}
     <label>Cliente *</label>
-    <select id="f_clienteId">
-      <option value="">-- Seleziona --</option>
-      ${opts}
-    </select>
+    <select id="f_clienteId"><option value="">-- Seleziona --</option>${opts}</select>
     <label>Marca</label>
-    <div class="input-with-voice">
-      <input id="f_marca" value="${escapeHtml(a.marca)}" placeholder="Fiat">
-      ${voiceButton('f_marca')}
-    </div>
+    <div class="input-with-voice"><input id="f_marca" value="${escapeHtml(a.marca)}" placeholder="Fiat">${voiceButton('f_marca')}</div>
     <label>Modello</label>
-    <div class="input-with-voice">
-      <input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">
-      ${voiceButton('f_modello')}
-    </div>
+    <div class="input-with-voice"><input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">${voiceButton('f_modello')}</div>
     <label>Targa</label>
-    <div class="input-with-voice">
-      <input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">
-      ${voiceButton('f_targa')}
-    </div>
+    <div class="input-with-voice"><input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">${voiceButton('f_targa')}</div>
     <label>Telaio (VIN)</label>
-    <div class="input-with-voice">
-      <input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">
-      ${voiceButton('f_telaio')}
-    </div>
+    <div class="input-with-voice"><input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">${voiceButton('f_telaio')}</div>
     <label>Anno</label>
-    <div class="input-with-voice">
-      <input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">
-      ${voiceButton('f_anno')}
-    </div>
+    <div class="input-with-voice"><input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">${voiceButton('f_anno')}</div>
     <label>Chilometri attuali</label>
-    <div class="input-with-voice">
-      <input id="f_km" value="${escapeHtml(a.km)}" type="number" placeholder="85000">
-      ${voiceButton('f_km')}
-    </div>
+    <div class="input-with-voice"><input id="f_km" value="${escapeHtml(a.km)}" type="number" placeholder="85000">${voiceButton('f_km')}</div>
     <label>Note</label>
-    <div class="input-with-voice">
-      <textarea id="f_note" rows="2">${escapeHtml(a.note)}</textarea>
-      ${voiceButton('f_note', true)}
-    </div>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(a.note)}</textarea>${voiceButton('f_note', true)}</div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="saveAuto(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-danger" onclick="deleteAuto(${id})">🗑️ Elimina</button>` : ''}
@@ -1013,11 +782,7 @@ function openAutoModal(id = null, prefillClienteId = null) {
 async function saveAuto(id) {
   const clienteIdRaw = document.getElementById('f_clienteId').value;
   const clienteIdNum = Number(clienteIdRaw);
-  
-  if (!clienteIdRaw || isNaN(clienteIdNum)) {
-    alert('️ Seleziona un cliente valido');
-    return;
-  }
+  if (!clienteIdRaw || isNaN(clienteIdNum)) { alert('⚠️ Seleziona un cliente valido'); return; }
   
   const data = {
     clienteId: clienteIdNum,
@@ -1036,35 +801,33 @@ async function saveAuto(id) {
     await firestoreSet('auto', id, data);
   } else {
     const newIdVal = newId();
-    const newAuto = { id: newIdVal, ...data, createdAt: new Date().toISOString() };
-    db.auto.push(newAuto);
+    db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
     await firestoreSet('auto', newIdVal, data);
   }
   
   saveDB();
   closeModal();
-  
   await new Promise(resolve => setTimeout(resolve, 500));
   
-  if (String(currentClienteId) === String(data.clienteId)) {
-    renderSchedaCliente();
-  } else {
-    renderCurrent();
-  }
+  if (String(currentClienteId) === String(data.clienteId)) renderSchedaCliente();
+  else renderCurrent();
 }
 
 async function deleteAuto(id) {
-  if (!confirm('Eliminare l\'auto e tutti i suoi interventi?')) return;
+  if (!confirm('Eliminare l\'auto e tutti i suoi interventi/preventivi?')) return;
   const auto = db.auto.find(a => a.id === id);
-  for (const i of db.interventi.filter(i => i.autoId === id)) {
-    await firestoreDelete('interventi', i.id);
-  }
+  for (const i of db.interventi.filter(i => i.autoId === id)) await firestoreDelete('interventi', i.id);
+  for (const p of db.preventivi.filter(p => p.autoId === id)) await firestoreDelete('preventivi', p.id);
   await firestoreDelete('auto', id);
+  
   db.interventi = db.interventi.filter(i => i.autoId !== id);
+  db.preventivi = db.preventivi.filter(p => p.autoId !== id);
   db.auto = db.auto.filter(a => a.id !== id);
+  
   saveDB();
   closeModal();
-  if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
+  await new Promise(resolve => setTimeout(resolve, 500));
+  if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
   else renderCurrent();
 }
 
@@ -1073,19 +836,18 @@ async function deleteAuto(id) {
 // ============================================================
 function openInterventoModal(id = null, prefillAutoId = null) {
   const i = id ? db.interventi.find(x => x.id === id) : { 
-    autoId: prefillAutoId || '', tipo:'manutenzione', 
-    data: new Date().toISOString().slice(0,10), km:'', 
-    descrizione:'', pezzi:'', costoManodopera:'', costoPezzi:'',
-    prossimoData:'', prossimoKm:'', note:'' 
+    autoId: prefillAutoId || '', tipo:'manutenzione', data: new Date().toISOString().slice(0,10), km:'', 
+    descrizione:'', pezzi:'', costoManodopera:'', costoPezzi:'', prossimoData:'', prossimoKm:'', note:'' 
   };
   let autoList = db.auto;
-  if (currentClienteId) autoList = autoList.filter(a => a.clienteId === currentClienteId);
+  if (currentClienteId) autoList = autoList.filter(a => String(a.clienteId) === String(currentClienteId));
   const opts = autoList.map(a => {
     const c = db.clienti.find(x => x.id === a.clienteId);
     const cn = c ? ` (${c.nome} ${c.cognome})` : '';
-    return `<option value="${a.id}" ${a.id == i.autoId ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}${cn}</option>`;
+    return `<option value="${a.id}" ${String(a.id) === String(i.autoId) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}${cn}</option>`;
   }).join('');
   const costoTot = (Number(i.costoManodopera) || 0) + (Number(i.costoPezzi) || 0);
+  
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Intervento</h2>
     <label>Auto *</label>
@@ -1098,23 +860,15 @@ function openInterventoModal(id = null, prefillAutoId = null) {
       <option value="revisione" ${i.tipo==='revisione'?'selected':''}>📋 Revisione</option>
       <option value="altro" ${i.tipo==='altro'?'selected':''}>📦 Altro</option>
     </select>
-    <label>Data</label>
-    <input id="f_data" type="date" value="${i.data}">
-    <label>Chilometri</label>
-    <input id="f_km" type="number" value="${escapeHtml(i.km)}">
+    <label>Data</label><input id="f_data" type="date" value="${i.data}">
+    <label>Chilometri</label><input id="f_km" type="number" value="${escapeHtml(i.km)}">
     <label>Descrizione lavoro</label>
-    <textarea id="f_descrizione" rows="3">${escapeHtml(i.descrizione)}</textarea>
+    <div class="input-with-voice"><textarea id="f_descrizione" rows="3">${escapeHtml(i.descrizione)}</textarea>${voiceButton('f_descrizione', true)}</div>
     <label>Pezzi ricambi</label>
-    <textarea id="f_pezzi" rows="2">${escapeHtml(i.pezzi)}</textarea>
+    <div class="input-with-voice"><textarea id="f_pezzi" rows="2">${escapeHtml(i.pezzi)}</textarea>${voiceButton('f_pezzi', true)}</div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
-      <div>
-        <label>Manodopera (€)</label>
-        <input id="f_costoManodopera" type="number" step="0.01" value="${escapeHtml(i.costoManodopera)}" oninput="aggiornaTotale()">
-      </div>
-      <div>
-        <label>Pezzi (€)</label>
-        <input id="f_costoPezzi" type="number" step="0.01" value="${escapeHtml(i.costoPezzi)}" oninput="aggiornaTotale()">
-      </div>
+      <div><label>Manodopera (€)</label><input id="f_costoManodopera" type="number" step="0.01" value="${escapeHtml(i.costoManodopera)}" oninput="aggiornaTotale()"></div>
+      <div><label>Pezzi (€)</label><input id="f_costoPezzi" type="number" step="0.01" value="${escapeHtml(i.costoPezzi)}" oninput="aggiornaTotale()"></div>
     </div>
     <div style="background:#f0f9ff; padding:10px; border-radius:8px; margin-bottom:10px; text-align:right">
       <strong>Totale: <span id="totalePreview">${fmtEuro(costoTot)}</span></strong>
@@ -1124,7 +878,7 @@ function openInterventoModal(id = null, prefillAutoId = null) {
       <div><label>Prossimo - Km</label><input id="f_prossimoKm" type="number" value="${escapeHtml(i.prossimoKm)}"></div>
     </div>
     <label>Note</label>
-    <textarea id="f_note" rows="2">${escapeHtml(i.note)}</textarea>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(i.note)}</textarea>${voiceButton('f_note', true)}</div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="saveIntervento(${id || 'null'})">💾 Salva</button>
       ${id ? `<button class="btn btn-danger" onclick="deleteIntervento(${id})">🗑️ Elimina</button>` : ''}
@@ -1142,11 +896,7 @@ function aggiornaTotale() {
 async function saveIntervento(id) {
   const autoIdRaw = document.getElementById('f_autoId').value;
   const autoIdNum = Number(autoIdRaw);
-
-  if (!autoIdRaw || isNaN(autoIdNum)) {
-    alert('⚠️ Seleziona un\'auto valida');
-    return;
-  }
+  if (!autoIdRaw || isNaN(autoIdNum)) { alert('⚠️ Seleziona un\'auto valida'); return; }
 
   const data = {
     autoId: autoIdNum,
@@ -1183,16 +933,11 @@ async function saveIntervento(id) {
 
   saveDB();
   closeModal();
-
-  // Aspetta che Firebase sincronizzi
   await new Promise(resolve => setTimeout(resolve, 500));
 
   const auto = db.auto.find(a => a.id === data.autoId);
-  if (auto && String(currentClienteId) === String(auto.clienteId)) {
-    renderSchedaCliente();
-  } else {
-    renderCurrent();
-  }
+  if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
+  else renderCurrent();
 }
 
 async function deleteIntervento(id) {
@@ -1204,7 +949,7 @@ async function deleteIntervento(id) {
   closeModal();
   if (int) {
     const auto = db.auto.find(a => a.id === int.autoId);
-    if (auto && currentClienteId === auto.clienteId) renderSchedaCliente();
+    if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
     else renderCurrent();
   }
 }
@@ -1214,26 +959,22 @@ async function deleteIntervento(id) {
 // ============================================================
 function openPreventivoModal(id = null) {
   const p = id ? db.preventivi.find(x => x.id === id) : { 
-    clienteId: currentClienteId || '', autoId: '', 
-    data: new Date().toISOString().slice(0,10),
-    voci: [{ descrizione: '', quantita: 1, prezzo: 0 }],
-    note: '', validoFino: '', stato: 'bozza'
+    clienteId: currentClienteId || '', autoId: '', data: new Date().toISOString().slice(0,10),
+    voci: [{ descrizione: '', quantita: 1, prezzo: 0 }], note: '', validoFino: '', stato: 'bozza'
   };
-  const clientiOpts = db.clienti.map(c => 
-    `<option value="${c.id}" ${c.id == p.clienteId ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`
-  ).join('');
-  let autoList = p.clienteId ? db.auto.filter(a => a.clienteId == p.clienteId) : db.auto;
-  const autoOpts = autoList.map(a => 
-    `<option value="${a.id}" ${a.id == p.autoId ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`
-  ).join('');
+  const clientiOpts = db.clienti.map(c => `<option value="${c.id}" ${String(c.id) === String(p.clienteId) ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
+  let autoList = p.clienteId ? db.auto.filter(a => String(a.clienteId) === String(p.clienteId)) : db.auto;
+  const autoOpts = autoList.map(a => `<option value="${a.id}" ${String(a.id) === String(p.autoId) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
+  
   const vociHtml = p.voci.map((v, idx) => `
     <div class="voce-row">
       <input placeholder="Descrizione" value="${escapeHtml(v.descrizione)}" onchange="updateVoce(${idx}, 'descrizione', this.value)">
       <input type="number" placeholder="Qtà" value="${v.quantita}" style="width:70px" onchange="updateVoce(${idx}, 'quantita', this.value)">
       <input type="number" step="0.01" placeholder="€" value="${v.prezzo}" style="width:90px" onchange="updateVoce(${idx}, 'prezzo', this.value)">
-      <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})">×</button>
+      <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})" title="Rimuovi voce">×</button>
     </div>
   `).join('');
+  
   openModal(`
     <h2>${id ? 'Modifica' : 'Nuovo'} Preventivo</h2>
     <label>Cliente *</label>
@@ -1272,24 +1013,42 @@ function openPreventivoModal(id = null) {
 
 function refreshAutoPrev() {
   const cid = window.currentPreventivo.clienteId;
-  const autoList = cid ? db.auto.filter(a => a.clienteId == cid) : db.auto;
+  const autoList = cid ? db.auto.filter(a => String(a.clienteId) === String(cid)) : db.auto;
   const sel = document.getElementById('f_autoId');
   const currentVal = window.currentPreventivo.autoId;
   sel.innerHTML = '<option value="">-- Nessuna --</option>' + 
-    autoList.map(a => `<option value="${a.id}" ${a.id == currentVal ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
+    autoList.map(a => `<option value="${a.id}" ${String(a.id) === String(currentVal) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
 }
 
 function updatePrevField(field, value) { window.currentPreventivo[field] = value; }
 function updateVoce(idx, field, value) {
   window.currentPreventivo.voci[idx][field] = field === 'descrizione' ? value : Number(value);
 }
+
+// ✅ FUNZIONI CORRETTE PER AGGIUNGERE/RIMUOVERE VOCI SENZA RIAPRIRE IL MODAL
 function addVoce() {
+  if (!window.currentPreventivo) return;
   window.currentPreventivo.voci.push({ descrizione: '', quantita: 1, prezzo: 0 });
-  openPreventivoModal(window.currentPreventivo.id || null);
+  renderVociContainer();
 }
+
 function removeVoce(idx) {
+  if (!window.currentPreventivo) return;
   window.currentPreventivo.voci.splice(idx, 1);
-  openPreventivoModal(window.currentPreventivo.id || null);
+  renderVociContainer();
+}
+
+function renderVociContainer() {
+  const container = document.getElementById('vociContainer');
+  if (!container || !window.currentPreventivo) return;
+  container.innerHTML = window.currentPreventivo.voci.map((v, idx) => `
+    <div class="voce-row">
+      <input placeholder="Descrizione" value="${escapeHtml(v.descrizione)}" onchange="updateVoce(${idx}, 'descrizione', this.value)">
+      <input type="number" placeholder="Qtà" value="${v.quantita}" style="width:70px" onchange="updateVoce(${idx}, 'quantita', this.value)">
+      <input type="number" step="0.01" placeholder="€" value="${v.prezzo}" style="width:90px" onchange="updateVoce(${idx}, 'prezzo', this.value)">
+      <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})" title="Rimuovi voce">×</button>
+    </div>
+  `).join('');
 }
 
 async function savePreventivo(id) {
@@ -1307,7 +1066,7 @@ async function savePreventivo(id) {
   }
   saveDB();
   closeModal();
-  if (currentClienteId == p.clienteId) renderSchedaCliente();
+  if (String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
   else renderCurrent();
 }
 
@@ -1318,15 +1077,15 @@ async function deletePreventivo(id) {
   db.preventivi = db.preventivi.filter(x => x.id !== id);
   saveDB();
   closeModal();
-  if (p && currentClienteId == p.clienteId) renderSchedaCliente();
+  if (p && String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
   else renderCurrent();
 }
 
 function generatePDF(id) {
   const p = db.preventivi.find(x => x.id === id);
   if (!p) return;
-  const cliente = db.clienti.find(c => c.id == p.clienteId);
-  const auto = p.autoId ? db.auto.find(a => a.id == p.autoId) : null;
+  const cliente = db.clienti.find(c => String(c.id) === String(p.clienteId));
+  const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
   const totale = p.voci.reduce((sum, v) => sum + (v.quantita * v.prezzo), 0);
   const html = `
     <div class="preventivo-doc">
@@ -1337,21 +1096,11 @@ function generatePDF(id) {
       ${cliente.telefono ? `<p>Tel: ${escapeHtml(cliente.telefono)}</p>` : ''}
       ${cliente.email ? `<p>Email: ${escapeHtml(cliente.email)}</p>` : ''}
       ${cliente.indirizzo ? `<p>${escapeHtml(cliente.indirizzo)}</p>` : ''}
-      ${auto ? `
-        <h3 style="margin-top:20px">Veicolo</h3>
-        <p>${escapeHtml(auto.marca + ' ' + auto.modello)} - Targa: <strong>${escapeHtml(auto.targa)}</strong></p>
-      ` : ''}
+      ${auto ? `<h3 style="margin-top:20px">Veicolo</h3><p>${escapeHtml(auto.marca + ' ' + auto.modello)} - Targa: <strong>${escapeHtml(auto.targa)}</strong></p>` : ''}
       <table>
         <thead><tr><th>Descrizione</th><th>Qtà</th><th>Prezzo</th><th>Totale</th></tr></thead>
         <tbody>
-          ${p.voci.map(v => `
-            <tr>
-              <td>${escapeHtml(v.descrizione)}</td>
-              <td>${v.quantita}</td>
-              <td>${fmtEuro(v.prezzo)}</td>
-              <td>${fmtEuro(v.quantita * v.prezzo)}</td>
-            </tr>
-          `).join('')}
+          ${p.voci.map(v => `<tr><td>${escapeHtml(v.descrizione)}</td><td>${v.quantita}</td><td>${fmtEuro(v.prezzo)}</td><td>${fmtEuro(v.quantita * v.prezzo)}</td></tr>`).join('')}
         </tbody>
       </table>
       <p class="total" style="text-align:right; margin-top:20px">TOTALE: ${fmtEuro(totale)}</p>
@@ -1405,9 +1154,9 @@ function renderDashboard() {
   const incassoTot = db.interventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
   const prossimi = [];
   db.interventi.forEach(i => {
-    const auto = db.auto.find(a => a.id === i.autoId);
+    const auto = db.auto.find(a => String(a.id) === String(i.autoId));
     if (!auto) return;
-    const cliente = db.clienti.find(c => c.id === auto.clienteId);
+    const cliente = db.clienti.find(c => String(c.id) === String(auto.clienteId));
     if (!cliente) return;
     if (i.prossimoData) {
       const d = daysUntil(i.prossimoData);
@@ -1450,8 +1199,8 @@ function renderDashboard() {
     <div class="card">
       <h3>🕐 Ultimi interventi</h3>
       ${ultimi.length ? ultimi.map(i => {
-        const auto = db.auto.find(a => a.id === i.autoId);
-        const cliente = auto ? db.clienti.find(c => c.id === auto.clienteId) : null;
+        const auto = db.auto.find(a => String(a.id) === String(i.autoId));
+        const cliente = auto ? db.clienti.find(c => String(c.id) === String(auto.clienteId)) : null;
         if (!cliente) return '';
         return `
           <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${cliente.id})">
@@ -1487,7 +1236,7 @@ function renderListaClienti() {
     if (txt.includes(search)) risultati.push({ type: 'cliente', data: c });
   });
   db.auto.forEach(a => {
-    const c = db.clienti.find(x => x.id === a.clienteId);
+    const c = db.clienti.find(x => String(x.id) === String(a.clienteId));
     if (!c) return;
     const txt = (a.marca + ' ' + a.modello + ' ' + a.targa + ' ' + a.telaio + ' ' + c.nome + ' ' + c.cognome).toLowerCase();
     if (txt.includes(search) && !risultati.some(r => r.type === 'cliente' && r.data.id === c.id)) {
@@ -1505,13 +1254,13 @@ function renderListaClienti() {
 }
 
 function renderCardCliente(c, matchInfo = '') {
-const autoCount = db.auto.filter(a => String(a.clienteId) === String(c.id)).length;
-const intCount = db.interventi.filter(i => {
-  const a = db.auto.find(x => String(x.id) === String(i.autoId));
-  return a && String(a.clienteId) === String(c.id);
-}).length;
-const prevCount = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).length;
-  const ultimaAuto = db.auto.filter(a => a.clienteId === c.id).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
+  const autoCount = db.auto.filter(a => String(a.clienteId) === String(c.id)).length;
+  const intCount = db.interventi.filter(i => {
+    const a = db.auto.find(x => String(x.id) === String(i.autoId));
+    return a && String(a.clienteId) === String(c.id);
+  }).length;
+  const prevCount = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).length;
+  const ultimaAuto = db.auto.filter(a => String(a.clienteId) === String(c.id)).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
   return `
     <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${c.id})">
       <div class="item-head">
@@ -1553,28 +1302,28 @@ function renderSchedaCliente() {
   const v = document.getElementById('view-scheda-cliente');
   const c = db.clienti.find(x => x.id === currentClienteId);
   if (!c) { tornaAListaClienti(); return; }
- const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
-
-   console.log('🔍 Debug auto:', db.auto.map(a => ({
-  id: a.id,
-  clienteId: a.clienteId,
-  tipoClienteId: typeof a.clienteId,
-  match: String(a.clienteId) === String(c.id)
-})));
   
+  const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
   const tuttiInterventi = [];
   autoList.forEach(a => {
-    db.interventi.filter(i => i.autoId === a.id).forEach(i => tuttiInterventi.push({ ...i, auto: a }));
+    db.interventi.filter(i => String(i.autoId) === String(a.id)).forEach(i => tuttiInterventi.push({ ...i, auto: a }));
   });
   tuttiInterventi.sort((a,b) => (b.data||'').localeCompare(a.data||''));
-  const preventiviList = db.preventivi.filter(p => p.clienteId == c.id).sort((a,b) => (b.data||'').localeCompare(a.data||''));
+  const preventiviList = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).sort((a,b) => (b.data||'').localeCompare(a.data||''));
   const incassoTot = tuttiInterventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
+  
   let contentHtml = '';
   if (currentSubTab === 'auto') contentHtml = renderSubTabAuto(c, autoList);
-  else if (currentSubTab == 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
+  else if (currentSubTab === 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
   else if (currentSubTab === 'preventivi') contentHtml = renderSubTabPreventivi(c, preventiviList);
+  
   v.innerHTML = `
-    <button class="back-btn" onclick="tornaAListaClienti()">← Torna alla lista</button>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <button class="btn btn-secondary" onclick="tornaAListaClienti()" style="padding:8px 12px; display:flex; align-items:center; gap:6px;">
+        ← Indietro
+      </button>
+      <span style="color:var(--muted); font-size:0.9rem;">Scheda Cliente</span>
+    </div>
     <div class="scheda-header">
       <h2>${escapeHtml(c.nome + ' ' + c.cognome)}</h2>
       ${c.telefono ? `<div class="sub-info">📞 ${escapeHtml(c.telefono)}</div>` : ''}
@@ -1611,7 +1360,7 @@ function renderSubTabAuto(c, autoList) {
   return `
     <button class="btn btn-primary btn-block" onclick="openAutoModal(null, ${c.id})" style="margin-bottom:12px">+ Aggiungi auto</button>
     ${autoList.map(a => {
-      const ultimi = db.interventi.filter(i => i.autoId === a.id).sort((x,y) => (y.data||'').localeCompare(x.data||'')).slice(0, 2);
+      const ultimi = db.interventi.filter(i => String(i.autoId) === String(a.id)).sort((x,y) => (y.data||'').localeCompare(x.data||'')).slice(0, 2);
       return `
         <div class="auto-card">
           <div class="auto-card-head">
@@ -1648,15 +1397,15 @@ function renderSubTabAuto(c, autoList) {
 }
 
 function renderSubTabStorico(c, interventi) {
-  const autoList = db.auto.filter(a => a.clienteId === c.id);
+  const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
   const filterAuto = window.filterAutoCliente || 'tutti';
   let filtered = interventi;
- if (filterAuto !== 'tutti') filtered = interventi.filter(i => String(i.auto.id) === String(filterAuto));
+  if (filterAuto !== 'tutti') filtered = interventi.filter(i => String(i.auto.id) === String(filterAuto));
   return `
     ${autoList.length > 1 ? `
       <div class="toolbar">
         <button class="btn btn-sm ${filterAuto==='tutti'?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente='tutti'; renderSchedaCliente()">Tutte</button>
-        ${autoList.map(a => `<button class="btn btn-sm ${filterAuto==a.id?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente=${a.id}; renderSchedaCliente()">${escapeHtml(a.targa)}</button>`).join('')}
+        ${autoList.map(a => `<button class="btn btn-sm ${String(filterAuto)===String(a.id)?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente=${a.id}; renderSchedaCliente()">${escapeHtml(a.targa)}</button>`).join('')}
       </div>
     ` : ''}
     ${filtered.length ? `
@@ -1687,7 +1436,7 @@ function renderSubTabPreventivi(c, preventivi) {
   return `
     <button class="btn btn-primary btn-block" onclick="openPreventivoModal()" style="margin-bottom:12px">+ Nuovo preventivo</button>
     ${preventivi.map(p => {
-      const auto = p.autoId ? db.auto.find(a => a.id == p.autoId) : null;
+      const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
       const totale = p.voci.reduce((s, v) => s + (v.quantita * v.prezzo), 0);
       return `
         <div class="item" style="cursor:pointer" onclick="openPreventivoModal(${p.id})">
@@ -1699,9 +1448,12 @@ function renderSubTabPreventivi(c, preventivi) {
                 <span style="font-size:0.75rem; color:${statoColor[p.stato]}; font-weight:600">${statoLabel[p.stato] || p.stato}</span>
               </div>
             </div>
-            <div style="text-align:right">
+            <div style="text-align:right; display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
               <div style="font-weight:700; font-size:1.1rem; color:var(--primary)">${fmtEuro(totale)}</div>
-              <button class="btn btn-success btn-sm" onclick="event.stopPropagation(); generatePDF(${p.id})">📄 PDF</button>
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-success btn-sm" onclick="event.stopPropagation(); generatePDF(${p.id})">📄 PDF</button>
+                <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deletePreventivo(${p.id})">🗑️ Elimina</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1713,7 +1465,7 @@ function renderSubTabPreventivi(c, preventivi) {
 function showDettaglioIntervento(id) {
   const i = db.interventi.find(x => x.id === id);
   if (!i) return;
-  const a = db.auto.find(x => x.id === i.autoId);
+  const a = db.auto.find(x => String(x.id) === String(i.autoId));
   openModal(`
     <h2><span class="badge ${i.tipo}">${i.tipo}</span> ${fmtDate(i.data)}</h2>
     <div class="detail-row"><span>🚗 Auto</span><span>${a ? escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa) : '-'}</span></div>
@@ -1767,7 +1519,7 @@ function cercaRicambi() {
     <div class="card">
       <h3>🔍 Cerca: "${escapeHtml(query)}"</h3>
       <div class="btn-row" style="margin-top:10px">
-        <a href="https://www.autodoc.it/ricambi-auto?${encodeURIComponent(query)}" target="_blank" class="btn btn-primary">🔧 AutoDoc</a>
+        <a href="https://www.auto-doc.it/?q=${encodeURIComponent(query)}" target="_blank" class="btn btn-primary">🔧 AutoDoc</a>
         <a href="https://www.ebay.it/sch/i.html?_nkw=${encodeURIComponent(query + ' ricambio')}" target="_blank" class="btn btn-accent">🛒 eBay</a>
         <a href="https://www.amazon.it/s?k=${encodeURIComponent(query + ' ricambio auto')}" target="_blank" class="btn btn-success">📦 Amazon</a>
       </div>
@@ -1800,7 +1552,7 @@ function renderImpostazioni() {
     </div>
     <div class="card">
       <h3>ℹ️ Info</h3>
-      <div class="detail-row"><span>Versione</span><span>4.0 - Firebase</span></div>
+      <div class="detail-row"><span>Versione</span><span>4.1 - Firebase + Vocale + Fix</span></div>
       <div class="detail-row"><span>Clienti</span><span>${db.clienti.length}</span></div>
       <div class="detail-row"><span>Auto</span><span>${db.auto.length}</span></div>
       <div class="detail-row"><span>Interventi</span><span>${db.interventi.length}</span></div>
@@ -1829,32 +1581,15 @@ function importData(e) {
       if (!data.clienti || !data.auto || !data.interventi) throw new Error('Formato non valido');
       if (!confirm('Sostituire TUTTI i dati (anche sul cloud)?')) return;
       
-      // Cancella tutto su Firestore
       const collections = ['clienti', 'auto', 'interventi', 'preventivi'];
       for (const col of collections) {
         const snap = await dbFirestore.collection(col).get();
-        for (const doc of snap.docs) {
-          await doc.ref.delete();
-        }
+        for (const doc of snap.docs) await doc.ref.delete();
       }
-      
-      // Reimporta
-      for (const c of data.clienti) {
-        const { id, ...rest } = c;
-        await dbFirestore.collection('clienti').doc(String(id)).set(rest);
-      }
-      for (const a of data.auto) {
-        const { id, ...rest } = a;
-        await dbFirestore.collection('auto').doc(String(id)).set(rest);
-      }
-      for (const i of data.interventi) {
-        const { id, ...rest } = i;
-        await dbFirestore.collection('interventi').doc(String(id)).set(rest);
-      }
-      for (const p of (data.preventivi || [])) {
-        const { id, ...rest } = p;
-        await dbFirestore.collection('preventivi').doc(String(id)).set(rest);
-      }
+      for (const c of data.clienti) { const { id, ...rest } = c; await dbFirestore.collection('clienti').doc(String(id)).set(rest); }
+      for (const a of data.auto) { const { id, ...rest } = a; await dbFirestore.collection('auto').doc(String(id)).set(rest); }
+      for (const i of data.interventi) { const { id, ...rest } = i; await dbFirestore.collection('interventi').doc(String(id)).set(rest); }
+      for (const p of (data.preventivi || [])) { const { id, ...rest } = p; await dbFirestore.collection('preventivi').doc(String(id)).set(rest); }
       await dbFirestore.collection('config').doc('ids').set({ nextId: data.nextId || 1 });
       
       alert('✅ Dati importati su Firebase');
@@ -1869,6 +1604,5 @@ function initApp() {
   renderCurrent();
 }
 
-// Stato online/offline
 window.addEventListener('online', () => setSyncStatus('online', '🟢 Online'));
 window.addEventListener('offline', () => setSyncStatus('offline', '⚫ Offline'));
