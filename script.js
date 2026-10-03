@@ -1529,8 +1529,10 @@ function renderSubTabPreventivi(c, preventivi) {
   return `
     <button class="btn btn-primary btn-block" onclick="openPreventivoModal()" style="margin-bottom:12px">+ Nuovo preventivo</button>
     ${preventivi.map(p => {
+      // Assicurati che voci sia un array
+      const voci = Array.isArray(p.voci) ? p.voci : [];
       const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
-      const totale = p.voci.reduce((s, v) => s + (v.quantita * v.prezzo), 0);
+      const totale = voci.reduce((s, v) => s + ((Number(v.quantita) || 0) * (Number(v.prezzo) || 0)), 0);
       return `
         <div class="item" style="cursor:pointer" onclick="openPreventivoModal(${p.id})">
           <div class="item-head">
@@ -1539,10 +1541,13 @@ function renderSubTabPreventivi(c, preventivi) {
               <div class="item-sub">${fmtDate(p.data)}${auto ? ' • ' + escapeHtml(auto.marca + ' ' + auto.modello + ' ' + auto.targa) : ''}</div>
               <div style="margin-top:4px">
                 <span style="font-size:0.75rem; color:${statoColor[p.stato]}; font-weight:600">${statoLabel[p.stato] || p.stato}</span>
+                <span style="font-size:0.75rem; color:var(--muted); margin-left:8px">${voci.length} voc${voci.length === 1 ? 'e' : 'i'}</span>
               </div>
             </div>
             <div style="text-align:right; display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
-              <div style="font-weight:700; font-size:1.1rem; color:var(--primary)">${fmtEuro(totale)}</div>
+              <div style="font-weight:700; font-size:1.2rem; color:var(--primary); background:#f0f9ff; padding:6px 12px; border-radius:8px;">
+                ${fmtEuro(totale)}
+              </div>
               <div style="display:flex; gap:6px;">
                 <button class="btn btn-success btn-sm" onclick="event.stopPropagation(); generatePDF(${p.id})">📄 PDF</button>
                 <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deletePreventivo(${p.id})">🗑️ Elimina</button>
