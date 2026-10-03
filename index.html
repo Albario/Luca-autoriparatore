@@ -1,3 +1,22 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1e40af">
+  <title>Gestione Officina</title>
+  
+  <!-- Favicon PNG -->
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
+  
+  <!-- ✅ QUESTO È IL TAG CHE MANCAVA -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Librerie PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
 <body>
 
 <!-- SCHERMATA LOGIN -->
@@ -24,45 +43,47 @@
 <!-- APP PRINCIPALE -->
 <div id="appContainer" style="display:none">
 
-<header>
-  <div class="header-content">
-    <img src="logo.png" alt="Logo" class="header-logo-img">
-    <div class="header-text">
-      <h1>Gestione Officina</h1>
-      <div class="sub">
-        <span id="headerSub">Caricamento...</span>
-        <span id="syncStatus" class="sync-status">🟢 Online</span>
+  <header>
+    <div class="header-content">
+      <img src="logo.png" alt="Logo" class="header-logo-img">
+      <div class="header-text">
+        <h1>Gestione Officina</h1>
+        <div class="sub">
+          <span id="headerSub">Caricamento...</span>
+          <span id="syncStatus" class="sync-status"> Online</span>
+        </div>
       </div>
     </div>
-  </div>
-</header>
+  </header>
 
-<div class="container">
-  <div class="tabs">
-    <div class="tab active" data-tab="dashboard"> Home</div>
-    <div class="tab" data-tab="clienti">👥 Clienti</div>
-    <div class="tab" data-tab="ricambi">🔩 Ricambi</div>
-    <div class="tab" data-tab="impostazioni">⚙️</div>
+  <div class="container">
+    <div class="tabs">
+      <div class="tab active" data-tab="dashboard">📊 Home</div>
+      <div class="tab" data-tab="clienti">👥 Clienti</div>
+      <div class="tab" data-tab="ricambi">🔩 Ricambi</div>
+      <div class="tab" data-tab="impostazioni">⚙️</div>
+    </div>
+
+    <div id="view-dashboard"></div>
+    <div id="view-clienti" style="display:none"></div>
+    <div id="view-scheda-cliente" style="display:none"></div>
+    <div id="view-ricambi" style="display:none"></div>
+    <div id="view-impostazioni" style="display:none"></div>
   </div>
 
-  <div id="view-dashboard"></div>
-  <div id="view-clienti" style="display:none"></div>
-  <div id="view-scheda-cliente" style="display:none"></div>
-  <div id="view-ricambi" style="display:none"></div>
-  <div id="view-impostazioni" style="display:none"></div>
+  <!-- Modal generico -->
+  <div class="modal-bg" id="modal">
+    <div class="modal">
+      <span class="close-x" onclick="closeModal()">&times;</span>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <!-- Template per PDF -->
+  <div id="preventivoTemplate" style="display:none"></div>
+
 </div>
-
-<!-- Modal generico -->
-<div class="modal-bg" id="modal">
-  <div class="modal">
-    <span class="close-x" onclick="closeModal()">&times;</span>
-    <div id="modalContent"></div>
-  </div>
-</div>
-
-<div id="preventivoTemplate" style="display:none"></div>
-
-</div> <!-- fine appContainer -->
 
 <script src="script.js"></script>
 </body>
+</html>
