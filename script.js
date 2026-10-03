@@ -206,7 +206,15 @@ function avviaListenerTempoReale() {
         });
         onUpdate(data);
         salvaCacheLocale();
-        renderCurrent();
+        
+        // Renderizza solo se l'app è visibile
+        if (document.getElementById('appContainer').style.display !== 'none') {
+          if (currentTab === 'clienti' && currentClienteId) {
+            renderSchedaCliente();
+          } else {
+            renderCurrent();
+          }
+        }
       },
       err => {
         console.error('Errore listener:', err);
@@ -261,8 +269,16 @@ function salvaCacheLocale() {
 }
 
 async function firestoreSet(collection, id, data) {
-  try { await dbFirestore.collection(collection).doc(String(id)).set(data); } 
-  catch (err) { console.error('Errore salvataggio:', err); setSyncStatus('error', '❌ Errore salvataggio'); }
+  setSyncStatus('syncing', '💾 Salvataggio...');
+  try {
+    await dbFirestore.collection(collection).doc(String(id)).set(data);
+    setSyncStatus('online', '🟢 Salvato');
+    setTimeout(() => setSyncStatus('online', '🟢 Online'), 2000);
+  } catch (err) {
+    console.error('Errore salvataggio:', err);
+    setSyncStatus('error', '❌ Errore salvataggio');
+    throw err;
+  }
 }
 
 async function firestoreDelete(collection, id) {
@@ -829,22 +845,28 @@ async function saveAuto(id) {
     note: document.getElementById('f_note').value.trim()
   };
   
-  if (id) {
-    const auto = db.auto.find(x => x.id === id);
-    if (auto) Object.assign(auto, data);
-    await firestoreSet('auto', id, data);
-  } else {
-    const newIdVal = newId();
-    db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
-    await firestoreSet('auto', newIdVal, data);
+  try {
+    if (id) {
+      await firestoreSet('auto', id, data);
+    } else {
+      const newIdVal = newId();
+      await firestoreSet('auto', newIdVal, data);
+    }
+    
+    // Aspetta che Firebase sincronizzi
+    await new Promise(resolve => setTimeout(resolve, 900));
+    
+    saveDB();
+    closeModal();
+    
+    if (String(currentClienteId) === String(data.clienteId)) {
+      renderSchedaCliente();
+    } else {
+      renderCurrent();
+    }
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
   }
-  
-  saveDB();
-  closeModal();
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  if (String(currentClienteId) === String(data.clienteId)) renderSchedaCliente();
-  else renderCurrent();
 }
 
 async function deleteAuto(id) {
