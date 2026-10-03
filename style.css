@@ -1,563 +1,1810 @@
-* { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --primary: #1e40af;
-  --primary-dark: #1e3a8a;
-  --accent: #f59e0b;
-  --bg: #f3f4f6;
-  --card: #ffffff;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --danger: #dc2626;
-  --success: #16a34a;
+// ============================================================
+// 🎨 LOGO SVG (riutilizzabile in header e PDF)
+// ============================================================
+function getLogoSVG(size = 40) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${size}" height="${size}">
+    <defs>
+      <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#1e3a8a;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <circle cx="32" cy="32" r="30" fill="url(#logoGrad)" stroke="white" stroke-width="2"/>
+    <!-- Chiave inglese stilizzata -->
+    <path d="M20 22 L28 30 L40 18" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M28 30 L20 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M28 30 L36 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="40" cy="18" r="4" fill="white"/>
+    <circle cx="20" cy="38" r="3" fill="white"/>
+    <circle cx="36" cy="38" r="3" fill="white"/>
+  </svg>`;
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  padding-bottom: 40px;
+// Logo in versione bianca per sfondi scuri (header)
+function getLogoWhiteSVG(size = 40) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${size}" height="${size}">
+    <circle cx="32" cy="32" r="30" fill="none" stroke="white" stroke-width="2"/>
+    <path d="M20 22 L28 30 L40 18" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M28 30 L20 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M28 30 L36 38" stroke="white" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <circle cx="40" cy="18" r="4" fill="white"/>
+    <circle cx="20" cy="38" r="3" fill="white"/>
+    <circle cx="36" cy="38" r="3" fill="white"/>
+  </svg>`;
 }
 
-header {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: white;
-  padding: 16px 20px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+// ============================================================
+// 🔥 CONFIGURAZIONE FIREBASE
+// ⚠️ SOSTITUISCI con la configurazione che hai copiato da Firebase
+// ============================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDGA4n2Wj9MzXjETRPxQxLTAsR1yRxvYEo",
+  authDomain: "officina-b683c.firebaseapp.com",
+  projectId: "officina-b683c",
+  storageBucket: "officina-b683c.firebasestorage.app",
+  messagingSenderId: "496757695481",
+  appId: "1:496757695481:web:6e5f3f0eea74d29d9ed328"
+};
+
+// ============================================================
+// 🔐 PASSWORD (come prima)
+// ⚠️ SOSTITUISCI con il tuo hash SHA-256
+// ============================================================
+const PASSWORD_HASH = 'a3a3e110f5bce3211d1d265f3ace7fab88dce16019db6062082347f8e1677c21';
+
+// ============================================================
+// FIREBASE INIT
+// ============================================================
+let dbFirestore;
+let unsubscribers = [];
+
+const firebaseScript = document.createElement('script');
+firebaseScript.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js';
+firebaseScript.onload = () => {
+  const firestoreScript = document.createElement('script');
+  firestoreScript.src = 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js';
+  firestoreScript.onload = () => {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      dbFirestore = firebase.firestore();
+      dbFirestore.enablePersistence().catch(err => {
+        console.warn('Persistenza offline non disponibile:', err);
+      });
+      console.log('✅ Firebase connesso');
+    } catch (err) {
+      console.error('❌ Errore Firebase:', err);
+      alert('Errore di connessione a Firebase. Controlla la configurazione.');
+    }
+  };
+  document.head.appendChild(firestoreScript);
+};
+document.head.appendChild(firebaseScript);
+
+// ============================================================
+// DATABASE LOCALE (cache)
+// ============================================================
+let db = {
+  clienti: [],
+  auto: [],
+  interventi: [],
+  preventivi: [],
+  nextId: 1
+};
+
+// ============================================================
+// AUTENTICAZIONE
+// ============================================================
+(async function checkAuth() {
+  const logged = sessionStorage.getItem('officina_logged');
+  if (logged === 'ok') {
+    await waitForFirebase();
+    showApp();
+  } else {
+    document.getElementById('loginScreen').style.display = 'flex';
+    document.getElementById('appContainer').style.display = 'none';
+    document.getElementById('loginPassword').focus();
+  }
+})();
+
+function waitForFirebase() {
+  return new Promise(resolve => {
+    const check = setInterval(() => {
+      if (dbFirestore) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 100);
+  });
 }
 
-header h1 { font-size: 1.3rem; display: flex; align-items: center; gap: 8px; }
-header .sub { font-size: 0.8rem; opacity: 0.85; margin-top: 2px; }
-
-.container { max-width: 900px; margin: 0 auto; padding: 16px; }
-
-.tabs {
-  display: flex;
-  background: var(--card);
-  border-radius: 12px;
-  padding: 6px;
-  margin-bottom: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  overflow-x: auto;
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-.tab {
-  flex: 1;
-  padding: 10px 8px;
-  text-align: center;
-  cursor: pointer;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--muted);
-  white-space: nowrap;
-  transition: all 0.2s;
+async function tentaLogin() {
+  const pwd = document.getElementById('loginPassword').value;
+  const hash = await sha256(pwd);
+  if (hash === PASSWORD_HASH) {
+    sessionStorage.setItem('officina_logged', 'ok');
+    await waitForFirebase();
+    showApp();
+  } else {
+    const err = document.getElementById('loginError');
+    err.textContent = '❌ Password errata';
+    document.getElementById('loginPassword').value = '';
+    document.getElementById('loginPassword').focus();
+    setTimeout(() => err.textContent = '', 3000);
+  }
 }
 
-.tab.active { background: var(--primary); color: white; }
-
-.card {
-  background: var(--card);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+async function showApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('loadingScreen').style.display = 'flex';
+  
+  await caricaDatiDaCloud();
+  avviaListenerTempoReale();
+  
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('appContainer').style.display = 'block';
+  initApp();
 }
 
-.card h3 { font-size: 1rem; margin-bottom: 10px; color: var(--primary); }
-
-.stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+function logout() {
+  if (!confirm('Vuoi uscire?')) return;
+  unsubscribers.forEach(unsub => unsub());
+  unsubscribers = [];
+  sessionStorage.removeItem('officina_logged');
+  location.reload();
 }
 
-.stat {
-  background: var(--card);
-  padding: 14px;
-  border-radius: 12px;
-  text-align: center;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+// ============================================================
+// CARICAMENTO DATI DA FIREBASE
+// ============================================================
+async function caricaDatiDaCloud() {
+  setSyncStatus('syncing', '🔄 Sync...');
+  try {
+    const [clientiSnap, autoSnap, interventiSnap, preventiviSnap, configSnap] = await Promise.all([
+      dbFirestore.collection('clienti').get(),
+      dbFirestore.collection('auto').get(),
+      dbFirestore.collection('interventi').get(),
+      dbFirestore.collection('preventivi').get(),
+      dbFirestore.collection('config').doc('ids').get()
+    ]);
+    
+    db.clienti = clientiSnap.docs.map(doc => ({ id: Number(doc.id), ...doc.data() }));
+    
+    db.auto = autoSnap.docs.map(doc => {
+      const data = doc.data();
+      let cid = Number(data.clienteId);
+      if (isNaN(cid)) cid = 0;
+      return { id: Number(doc.id), ...data, clienteId: cid };
+    });
+    
+    db.interventi = interventiSnap.docs.map(doc => {
+      const data = doc.data();
+      let aid = Number(data.autoId);
+      if (isNaN(aid)) aid = 0;
+      return { id: Number(doc.id), ...data, autoId: aid };
+    });
+    
+    db.preventivi = preventiviSnap.docs.map(doc => {
+      const data = doc.data();
+      let cid = Number(data.clienteId);
+      if (isNaN(cid)) cid = 0;
+      let aid = data.autoId ? Number(data.autoId) : null;
+      if (aid !== null && isNaN(aid)) aid = null;
+      return { id: Number(doc.id), ...data, clienteId: cid, autoId: aid };
+    });
+    
+    db.nextId = configSnap.exists ? (Number(configSnap.data().nextId) || 1) : 1;
+    await riparaDatiInvalidi();
+    setSyncStatus('online', '🟢 Online');
+  } catch (err) {
+    console.error('Errore caricamento:', err);
+    setSyncStatus('error', '❌ Errore sync');
+    const cached = localStorage.getItem('officina_db_cache');
+    if (cached) {
+      try { db = JSON.parse(cached); } catch(e) {}
+    }
+  }
 }
 
-.stat .num { font-size: 1.6rem; font-weight: 700; color: var(--primary); }
-.stat .lbl { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
-
-input, select, textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-family: inherit;
-  background: white;
-  margin-bottom: 10px;
+async function riparaDatiInvalidi() {
+  const autoDaRiparare = db.auto.filter(a => isNaN(a.clienteId) || a.clienteId === 0 || a.clienteId === null);
+  if (autoDaRiparare.length > 0) {
+    console.log('🔧 Riparazione:', autoDaRiparare.length, 'auto con clienteId invalido');
+    for (const auto of autoDaRiparare) {
+      if (db.clienti.length === 1) {
+        auto.clienteId = db.clienti[0].id;
+        await firestoreSet('auto', auto.id, { ...auto, clienteId: auto.clienteId });
+        console.log('✅ Auto riparata:', auto.marca, auto.modello, '→ cliente', auto.clienteId);
+      } else {
+        console.warn('⚠️ Auto senza cliente valido:', auto.marca, auto.modello, '- assegnala manualmente');
+      }
+    }
+  }
 }
 
-input:focus, select:focus, textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(30,64,175,0.1);
+// ============================================================
+// LISTENER TEMPO REALE
+// ============================================================
+function avviaListenerTempoReale() {
+  const listen = (collection, onUpdate, normalizeFn) => {
+    return dbFirestore.collection(collection).onSnapshot(
+      { includeMetadataChanges: true },
+      snapshot => {
+        // Ignora i dati dalla cache locale, usa solo i dati dal server
+        if (snapshot.metadata.fromCache) return;
+        
+        const data = snapshot.docs.map(doc => {
+          const item = { id: Number(doc.id), ...doc.data() };
+          return normalizeFn ? normalizeFn(item) : item;
+        });
+        onUpdate(data);
+        salvaCacheLocale();
+        
+        // Renderizza solo se l'app è visibile
+        if (document.getElementById('appContainer').style.display !== 'none') {
+          if (currentTab === 'clienti' && currentClienteId) {
+            renderSchedaCliente();
+          } else {
+            renderCurrent();
+          }
+        }
+      },
+      err => {
+        console.error('Errore listener:', err);
+        setSyncStatus('error', '❌ Offline');
+      }
+    );
+  };
+  
+  unsubscribers.push(listen('clienti', data => db.clienti = data));
+  unsubscribers.push(listen('auto', data => db.auto = data, item => {
+    let cid = Number(item.clienteId);
+    if (isNaN(cid)) cid = 0;
+    item.clienteId = cid;
+    return item;
+  }));
+  unsubscribers.push(listen('interventi', data => db.interventi = data, item => {
+    let aid = Number(item.autoId);
+    if (isNaN(aid)) aid = 0;
+    item.autoId = aid;
+    return item;
+  }));
+  unsubscribers.push(listen('preventivi', data => db.preventivi = data, item => {
+    let cid = Number(item.clienteId);
+    if (isNaN(cid)) cid = 0;
+    item.clienteId = cid;
+    if (item.autoId) {
+      let aid = Number(item.autoId);
+      if (isNaN(aid)) aid = null;
+      item.autoId = aid;
+    }
+    return item;
+  }));
+  unsubscribers.push(
+    dbFirestore.collection('config').doc('ids').onSnapshot(doc => {
+      if (doc.exists) db.nextId = Number(doc.data().nextId) || 1;
+    })
+  );
 }
 
-label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
-
-.btn {
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: inherit;
-  text-decoration: none;
-  display: inline-block;
-  text-align: center;
+// ============================================================
+// SALVATAGGIO SU FIREBASE
+// ============================================================
+async function saveDB() {
+  setSyncStatus('syncing', '🔄 Salvataggio...');
+  salvaCacheLocale();
+  updateHeader();
+  setSyncStatus('online', '🟢 Online');
 }
 
-.btn-primary { background: var(--primary); color: white; }
-.btn-primary:hover { background: var(--primary-dark); }
-.btn-accent { background: var(--accent); color: white; }
-.btn-danger { background: var(--danger); color: white; }
-.btn-secondary { background: var(--border); color: var(--text); }
-.btn-success { background: var(--success); color: white; }
-.btn-block { width: 100%; }
-.btn-sm { padding: 6px 10px; font-size: 0.8rem; }
-.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-
-.item {
-  background: var(--card);
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 10px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  border-left: 4px solid var(--primary);
+function salvaCacheLocale() {
+  try { localStorage.setItem('officina_db_cache', JSON.stringify(db)); } catch(e) {}
 }
 
-.item-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
-.item-title { font-weight: 600; font-size: 1rem; }
-.item-sub { font-size: 0.85rem; color: var(--muted); margin: 2px 0; }
-
-.badge {
-  display: inline-block;
-  padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  background: var(--border);
-  color: var(--text);
+async function firestoreSet(collection, id, data) {
+  setSyncStatus('syncing', '💾 Salvataggio...');
+  try {
+    await dbFirestore.collection(collection).doc(String(id)).set(data);
+    setSyncStatus('online', '🟢 Salvato');
+    setTimeout(() => setSyncStatus('online', '🟢 Online'), 2000);
+  } catch (err) {
+    console.error('Errore salvataggio:', err);
+    setSyncStatus('error', '❌ Errore salvataggio');
+    throw err;
+  }
 }
 
-.badge.manutenzione { background: #dbeafe; color: #1e40af; }
-.badge.riparazione { background: #fef3c7; color: #92400e; }
-.badge.diagnosi { background: #e0e7ff; color: #3730a3; }
-.badge.revisione { background: #d1fae5; color: #065f46; }
-.badge.altro { background: #f3e8ff; color: #6b21a8; }
-
-.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
-.empty-icon { font-size: 3rem; margin-bottom: 10px; }
-
-.search {
-  width: 100%;
-  padding: 12px 16px;
-  border: none;
-  border-radius: 10px;
-  background: var(--card);
-  font-size: 0.95rem;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+async function firestoreDelete(collection, id) {
+  try { await dbFirestore.collection(collection).doc(String(id)).delete(); } 
+  catch (err) { console.error('Errore eliminazione:', err); }
 }
 
-.modal-bg {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: 200;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
+function newId() {
+  const id = db.nextId;
+  db.nextId++;
+  dbFirestore.collection('config').doc('ids').set({ nextId: db.nextId }).catch(() => {});
+  return id;
 }
 
-.modal-bg.show { display: flex; }
-
-.modal {
-  background: white;
-  border-radius: 14px;
-  padding: 20px;
-  max-width: 500px;
-  width: 100%;
-  max-height: 90vh;
-  overflow-y: auto;
+function setSyncStatus(type, text) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.className = 'sync-status ' + type;
+  el.textContent = text;
 }
 
-.modal h2 { margin-bottom: 14px; color: var(--primary); }
+window.addEventListener('online', () => { setSyncStatus('online', '🟢 Online'); caricaDatiDaCloud(); });
+window.addEventListener('offline', () => { setSyncStatus('offline', '⚫ Offline'); });
 
-.close-x {
-  float: right;
-  cursor: pointer;
-  font-size: 1.5rem;
-  color: var(--muted);
-  line-height: 1;
+// ============================================================
+// UTIL
+// ============================================================
+function fmtDate(d) {
+  if (!d) return '-';
+  const dt = new Date(d);
+  return dt.toLocaleDateString('it-IT', { day:'2-digit', month:'2-digit', year:'numeric' });
 }
 
-.detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; gap: 12px; }
-.detail-row:last-child { border-bottom: none; }
-.detail-row span:first-child { color: var(--muted); flex-shrink: 0; }
-.detail-row span:last-child { font-weight: 500; text-align: right; word-break: break-word; }
-
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-
-/* ========== SCHEDA CLIENTE ========== */
-.scheda-header {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: white;
-  padding: 20px;
-  border-radius: 12px;
-  margin-bottom: 16px;
+function fmtKm(k) {
+  if (k === null || k === undefined || k === '') return '-';
+  return Number(k).toLocaleString('it-IT') + ' km';
 }
 
-.scheda-header h2 { font-size: 1.4rem; margin-bottom: 4px; }
-.scheda-header .sub-info { opacity: 0.9; font-size: 0.9rem; margin-top: 8px; }
-.scheda-header .quick-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-.scheda-header .quick-actions .btn {
-  background: rgba(255,255,255,0.2);
-  color: white;
-  font-size: 0.85rem;
-  padding: 8px 12px;
-}
-.scheda-header .quick-actions .btn:hover { background: rgba(255,255,255,0.3); }
-
-.back-btn {
-  background: none;
-  border: none;
-  color: white;
-  cursor: pointer;
-  font-size: 0.9rem;
-  padding: 4px 0;
-  margin-bottom: 8px;
-  opacity: 0.9;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+function fmtEuro(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  return '€ ' + Number(v).toFixed(2).replace('.', ',');
 }
 
-/* Sub-tabs dentro scheda cliente */
-.sub-tabs {
-  display: flex;
-  background: var(--card);
-  border-radius: 10px;
-  padding: 4px;
-  margin-bottom: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  overflow-x: auto;
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-.sub-tab {
-  flex: 1;
-  padding: 8px 6px;
-  text-align: center;
-  cursor: pointer;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--muted);
-  white-space: nowrap;
-  transition: all 0.2s;
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const now = new Date(); now.setHours(0,0,0,0);
+  const d = new Date(dateStr); d.setHours(0,0,0,0);
+  return Math.round((d - now) / 86400000);
 }
 
-.sub-tab.active { background: var(--primary); color: white; }
+// ============================================================
+// NAVIGAZIONE
+// ============================================================
+const tabs = document.querySelectorAll('.tab');
+let currentTab = 'dashboard';
+let currentClienteId = null;
+let currentSubTab = 'auto';
 
-/* Timeline interventi */
-.timeline { position: relative; padding-left: 24px; }
-.timeline::before {
-  content: '';
-  position: absolute;
-  left: 8px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--border);
+tabs.forEach(t => t.addEventListener('click', () => {
+  tabs.forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  currentTab = t.dataset.tab;
+  showView('view-' + currentTab);
+  renderCurrent();
+}));
+
+function showView(viewId) {
+  document.querySelectorAll('[id^="view-"]').forEach(v => v.style.display = 'none');
+  document.getElementById(viewId).style.display = 'block';
 }
 
-.timeline-item {
-  position: relative;
-  background: var(--card);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  cursor: pointer;
-  transition: transform 0.1s;
+function updateHeader() {
+  const oggi = new Date().toLocaleDateString('it-IT', { weekday:'long', day:'numeric', month:'long' });
+  document.getElementById('headerSub').textContent =
+    oggi.charAt(0).toUpperCase() + oggi.slice(1) + ' • ' +
+    db.clienti.length + ' clienti • ' + db.auto.length + ' auto';
 }
 
-.timeline-item:hover { transform: translateX(2px); }
-
-.timeline-item::before {
-  content: '';
-  position: absolute;
-  left: -20px;
-  top: 18px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--primary);
-  border: 3px solid var(--bg);
+function openModal(html) {
+  document.getElementById('modalContent').innerHTML = html;
+  document.getElementById('modal').classList.add('show');
 }
 
-.timeline-date {
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin-bottom: 4px;
+function closeModal() {
+  document.getElementById('modal').classList.remove('show');
 }
 
-.timeline-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 2px; }
-.timeline-meta { font-size: 0.8rem; color: var(--muted); }
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target.id === 'modal') closeModal();
+});
 
-/* Auto card dentro scheda */
-.auto-card {
-  background: var(--card);
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 10px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  border-left: 4px solid var(--accent);
+// ============================================================
+// 🎤 RICONOSCIMENTO VOCALE
+// ============================================================
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceSupported = !!SpeechRecognition;
+let currentRecognitionCliente = null;
+let currentRecognitionAuto = null;
+let isStoppingCliente = false;
+let isStoppingAuto = false;
+
+function checkVoiceSupport() {
+  if (!SpeechRecognition) {
+    return `<div class="voice-not-supported">⚠️ Riconoscimento vocale non supportato da questo browser. Usa Chrome, Edge o Safari (iOS 14.5+)</div>`;
+  }
+  return '';
 }
 
-.auto-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 8px;
+function voiceButton(targetId, isTextarea = false) {
+  return `<button type="button" class="btn-voice" onclick="startVoice('${targetId}', ${isTextarea})" title="Detta con la voce">🎤</button>`;
 }
 
-.auto-info { font-size: 0.85rem; color: var(--muted); }
-.auto-info span { margin-right: 10px; }
+function startVoice(targetId, isTextarea = false) {
+  if (!SpeechRecognition) {
+    alert('⚠️ Il tuo browser non supporta il riconoscimento vocale.\nUsa Chrome, Edge o Safari su iPhone.');
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = false;
 
-/* Preventivo doc */
-.preventivo-doc {
-  background: white;
-  padding: 30px;
-  font-family: Arial, sans-serif;
-  max-width: 800px;
-  margin: 0 auto;
+  const btn = event.target.closest('.btn-voice');
+  const originalText = btn.innerHTML;
+  btn.innerHTML = '🔴';
+  btn.classList.add('listening');
+  btn.disabled = true;
+
+  recognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    const target = document.getElementById(targetId);
+    if (target) {
+      if (isTextarea) target.value = target.value ? (target.value + ' ' + text) : text;
+      else target.value = text;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato.');
+    else if (e.error === 'no-speech') alert('🎤 Nessuna voce rilevata.');
+    else if (e.error === 'network') alert('⚠️ Errore di rete.');
+    else alert('❌ Errore: ' + e.error);
+  };
+
+  recognition.onend = () => {
+    btn.innerHTML = originalText;
+    btn.classList.remove('listening');
+    btn.disabled = false;
+  };
+
+  try { recognition.start(); } 
+  catch(err) {
+    btn.innerHTML = originalText;
+    btn.classList.remove('listening');
+    btn.disabled = false;
+    alert('Errore avvio microfono: ' + err.message);
+  }
 }
 
-.preventivo-doc h1 { color: var(--primary); margin-bottom: 20px; }
-.preventivo-doc table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-.preventivo-doc th, .preventivo-doc td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-.preventivo-doc th { background: #f5f5f5; font-weight: 600; }
-.preventivo-doc .total { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+function startVoiceClienteRapido() {
+  if (!SpeechRecognition) return alert('⚠️ Riconoscimento vocale non supportato.');
+  if (currentRecognitionCliente) { stopVoiceClienteRapido(); return; }
 
-/* Voce preventivo */
-.voce-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-  align-items: center;
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  currentRecognitionCliente = recognition;
+  isStoppingCliente = false;
+
+  const btn = document.getElementById('btnVoiceRapidoCliente');
+  if (!btn) return;
+  btn.innerHTML = '🛑 STOP (clicca per terminare)';
+  btn.classList.add('listening');
+
+  let finalText = '';
+  let previewDiv = document.getElementById('voicePreviewCliente');
+  if (!previewDiv) {
+    previewDiv = document.createElement('div');
+    previewDiv.id = 'voicePreviewCliente';
+    previewDiv.className = 'voice-preview';
+    btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
+  }
+  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto... parla ora</div>';
+
+  recognition.onresult = (e) => {
+    let interim = ''; finalText = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "🛑 STOP" quando hai finito</div>`;
+  };
+
+  recognition.onerror = (e) => { if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato'); };
+
+  recognition.onend = () => {
+    const wasStopping = isStoppingCliente;
+    currentRecognitionCliente = null;
+    isStoppingCliente = false;
+    btn.innerHTML = '🗣️ Dettato rapido cliente';
+    btn.classList.remove('listening');
+    if (wasStopping && finalText.trim()) parseAndFillCliente(finalText);
+    else if (previewDiv) previewDiv.innerHTML = '';
+  };
+
+  try { recognition.start(); } 
+  catch(err) { 
+    alert('Errore microfono: ' + err.message);
+    btn.innerHTML = '🗣️ Dettato rapido cliente';
+    btn.classList.remove('listening');
+    currentRecognitionCliente = null;
+  }
 }
 
-.voce-row input { margin-bottom: 0; }
-.voce-row input:first-child { flex: 1; }
-
-@media (max-width: 480px) {
-  header h1 { font-size: 1.1rem; }
-  .tab { font-size: 0.75rem; padding: 8px 4px; }
-  .sub-tab { font-size: 0.7rem; padding: 6px 3px; }
-  .scheda-header h2 { font-size: 1.2rem; }
-}
-/* ========== LOGIN ========== */
-.login-screen {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  padding: 20px;
+function stopVoiceClienteRapido() {
+  if (!currentRecognitionCliente) return;
+  isStoppingCliente = true;
+  try { currentRecognitionCliente.stop(); } catch(err) {}
+  setTimeout(() => {
+    if (currentRecognitionCliente && isStoppingCliente) {
+      try { currentRecognitionCliente.abort(); } catch(err) {}
+    }
+  }, 2000);
 }
 
-.login-box {
-  background: white;
-  padding: 32px 24px;
-  border-radius: 16px;
-  max-width: 380px;
-  width: 100%;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-  text-align: center;
+function parseAndFillCliente(text) {
+  const result = { nome: '', cognome: '', telefono: '', email: '', indirizzo: '', note: '' };
+  let t = text.toLowerCase();
+  const phoneMatch = t.match(/(\+?\d[\d\s\-\/]{7,}\d)/);
+  if (phoneMatch) { result.telefono = phoneMatch[1].replace(/\s+/g, ' ').trim(); t = t.replace(phoneMatch[0], ''); }
+  const emailMatch = t.match(/[\w.-]+@[\w.-]+\.\w+/);
+  if (emailMatch) { result.email = emailMatch[0]; t = t.replace(emailMatch[0], ''); }
+  const keywords = ['nome','cognome','telefono','tel','cellulare','numero','email','mail','indirizzo','note','casa','abitazione','domicilio'];
+  keywords.forEach(k => { t = t.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' '); });
+  t = t.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = t.split(' ').filter(w => w.length > 0);
+  if (words.length >= 2) {
+    result.nome = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+    result.cognome = words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  } else if (words.length === 1) {
+    result.nome = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  }
+  showVoicePreviewCliente(result);
 }
 
-.login-logo {
-  font-size: 4rem;
-  margin-bottom: 8px;
+function showVoicePreviewCliente(data) {
+  const previewDiv = document.getElementById('voicePreviewCliente');
+  if (!previewDiv) return;
+  previewDiv.innerHTML = `
+    <div class="preview-title">✅ Ho capito questo:</div>
+    ${data.nome ? `<div class="preview-field"><span>Nome:</span><span>${escapeHtml(data.nome)}</span></div>` : ''}
+    ${data.cognome ? `<div class="preview-field"><span>Cognome:</span><span>${escapeHtml(data.cognome)}</span></div>` : ''}
+    ${data.telefono ? `<div class="preview-field"><span>Telefono:</span><span>${escapeHtml(data.telefono)}</span></div>` : ''}
+    ${data.email ? `<div class="preview-field"><span>Email:</span><span>${escapeHtml(data.email)}</span></div>` : ''}
+    <div style="margin-top:10px;display:flex;gap:6px">
+      <button class="btn btn-primary btn-sm" onclick="applyVoiceCliente()" style="flex:1">✅ Conferma</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewCliente').innerHTML=''" style="flex:1">✏️ Modifica</button>
+    </div>`;
+  window._voiceClienteData = data;
 }
 
-.login-box h1 {
-  color: var(--primary);
-  font-size: 1.4rem;
-  margin-bottom: 4px;
+function applyVoiceCliente() {
+  const d = window._voiceClienteData;
+  if (!d) return;
+  if (d.nome) document.getElementById('f_nome').value = d.nome;
+  if (d.cognome) document.getElementById('f_cognome').value = d.cognome;
+  if (d.telefono) document.getElementById('f_telefono').value = d.telefono;
+  if (d.email) document.getElementById('f_email').value = d.email;
+  if (d.indirizzo) document.getElementById('f_indirizzo').value = d.indirizzo;
+  document.getElementById('voicePreviewCliente').innerHTML = '<div style="color:var(--success);font-weight:600">✅ Dati inseriti!</div>';
 }
 
-.login-sub {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-bottom: 20px;
+function startVoiceAutoRapido() {
+  if (!SpeechRecognition) return alert('⚠️ Riconoscimento vocale non supportato.');
+  if (currentRecognitionAuto) { stopVoiceAutoRapido(); return; }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'it-IT';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  currentRecognitionAuto = recognition;
+  isStoppingAuto = false;
+
+  const btn = document.getElementById('btnVoiceRapidoAuto');
+  if (!btn) return;
+  btn.innerHTML = '🛑 STOP (clicca per terminare)';
+  btn.classList.add('listening');
+
+  let finalText = '';
+  let previewDiv = document.getElementById('voicePreviewAuto');
+  if (!previewDiv) {
+    previewDiv = document.createElement('div');
+    previewDiv.id = 'voicePreviewAuto';
+    previewDiv.className = 'voice-preview';
+    btn.parentNode.insertBefore(previewDiv, btn.nextSibling);
+  }
+  previewDiv.innerHTML = '<div class="preview-title">🎤 In ascolto...</div>';
+
+  recognition.onresult = (e) => {
+    let interim = ''; finalText = '';
+    for (let i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+      else interim += e.results[i][0].transcript;
+    }
+    previewDiv.innerHTML = `<div class="preview-title">🎤 "${finalText + interim}"</div><div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Clicca "🛑 STOP" quando hai finito</div>`;
+  };
+
+  recognition.onerror = (e) => { if (e.error === 'not-allowed') alert('⚠️ Permesso microfono negato'); };
+
+  recognition.onend = () => {
+    const wasStopping = isStoppingAuto;
+    currentRecognitionAuto = null;
+    isStoppingAuto = false;
+    btn.innerHTML = '🗣️ Dettato rapido auto';
+    btn.classList.remove('listening');
+    if (wasStopping && finalText.trim()) parseAndFillAuto(finalText);
+    else if (previewDiv) previewDiv.innerHTML = '';
+  };
+
+  try { recognition.start(); } 
+  catch(err) { 
+    alert('Errore microfono: ' + err.message);
+    btn.innerHTML = '🗣️ Dettato rapido auto';
+    btn.classList.remove('listening');
+    currentRecognitionAuto = null;
+  }
 }
 
-.login-error {
-  color: var(--danger);
-  font-size: 0.85rem;
-  margin-top: 12px;
-  min-height: 20px;
-}
-/* ========== STATO SYNC ========== */
-.sync-status {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 0.7rem;
-  background: rgba(255,255,255,0.2);
-  margin-left: 8px;
-  vertical-align: middle;
+function stopVoiceAutoRapido() {
+  if (!currentRecognitionAuto) return;
+  isStoppingAuto = true;
+  try { currentRecognitionAuto.stop(); } catch(err) {}
+  setTimeout(() => {
+    if (currentRecognitionAuto && isStoppingAuto) {
+      try { currentRecognitionAuto.abort(); } catch(err) {}
+    }
+  }, 2000);
 }
 
-.sync-status.syncing { background: #fbbf24; color: #000; }
-.sync-status.error { background: #dc2626; color: white; }
-.sync-status.offline { background: #6b7280; color: white; }
-
-/* ========== VOCE / MICROFONO ========== */
-.input-with-voice {
-  position: relative;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 10px;
+function parseAndFillAuto(text) {
+  const result = { marca: '', modello: '', targa: '', anno: '', km: '' };
+  let t = text.toLowerCase();
+  const targaMatch = t.match(/\b([a-z]{2})\s*(\d{3})\s*([a-z]{2})\b/i);
+  if (targaMatch) { result.targa = (targaMatch[1] + targaMatch[2] + targaMatch[3]).toUpperCase(); t = t.replace(targaMatch[0], ''); }
+  const annoMatch = t.match(/\b(19|20)\d{2}\b/);
+  if (annoMatch) { result.anno = annoMatch[0]; t = t.replace(annoMatch[0], ''); }
+  const kmMatch = t.match(/(\d{1,6})\s*(?:km|chilometri)/i);
+  if (kmMatch) { result.km = kmMatch[1]; t = t.replace(kmMatch[0], ''); }
+  const keywords = ['marca','modello','targa','anno','km','chilometri','auto','vettura','veicolo'];
+  keywords.forEach(k => { t = t.replace(new RegExp('\\b' + k + '\\b', 'gi'), ' '); });
+  t = t.replace(/[:;,.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = t.split(' ').filter(w => w.length > 1);
+  if (words.length >= 2) {
+    result.marca = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+    result.modello = words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  } else if (words.length === 1) {
+    result.marca = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  }
+  showVoicePreviewAuto(result);
 }
 
-.input-with-voice input,
-.input-with-voice textarea,
-.input-with-voice select {
-  flex: 1;
-  margin-bottom: 0;
+function showVoicePreviewAuto(data) {
+  const previewDiv = document.getElementById('voicePreviewAuto');
+  if (!previewDiv) return;
+  previewDiv.innerHTML = `
+    <div class="preview-title">✅ Ho capito questo:</div>
+    ${data.marca ? `<div class="preview-field"><span>Marca:</span><span>${escapeHtml(data.marca)}</span></div>` : ''}
+    ${data.modello ? `<div class="preview-field"><span>Modello:</span><span>${escapeHtml(data.modello)}</span></div>` : ''}
+    ${data.targa ? `<div class="preview-field"><span>Targa:</span><span>${escapeHtml(data.targa)}</span></div>` : ''}
+    ${data.anno ? `<div class="preview-field"><span>Anno:</span><span>${escapeHtml(data.anno)}</span></div>` : ''}
+    ${data.km ? `<div class="preview-field"><span>Km:</span><span>${escapeHtml(data.km)}</span></div>` : ''}
+    <div style="margin-top:10px;display:flex;gap:6px">
+      <button class="btn btn-primary btn-sm" onclick="applyVoiceAuto()" style="flex:1">✅ Conferma</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('voicePreviewAuto').innerHTML=''" style="flex:1">✏️ Modifica</button>
+    </div>`;
+  window._voiceAutoData = data;
 }
 
-.btn-voice {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: var(--primary);
-  color: white;
-  border: none;
-  cursor: pointer;
-  font-size: 1.1rem;
-  flex-shrink: 0;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+function applyVoiceAuto() {
+  const d = window._voiceAutoData;
+  if (!d) return;
+  if (d.marca) document.getElementById('f_marca').value = d.marca;
+  if (d.modello) document.getElementById('f_modello').value = d.modello;
+  if (d.targa) document.getElementById('f_targa').value = d.targa;
+  if (d.anno) document.getElementById('f_anno').value = d.anno;
+  if (d.km) document.getElementById('f_km').value = d.km;
+  document.getElementById('voicePreviewAuto').innerHTML = '<div style="color:var(--success);font-weight:600">✅ Dati inseriti!</div>';
 }
 
-.btn-voice:hover { background: var(--primary-dark); transform: scale(1.05); }
-.btn-voice.listening {
-  background: var(--danger);
-  animation: pulse-voice 1s infinite;
-}
-.btn-voice:disabled {
-  background: var(--border);
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-@keyframes pulse-voice {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.6); }
-  50% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
-}
-
-.voice-rapido {
-  background: linear-gradient(135deg, var(--accent), #d97706);
-  color: white;
-  border: none;
-  padding: 12px 16px;
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  width: 100%;
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: all 0.2s;
+// ============================================================
+// CLIENTI CRUD
+// ============================================================
+function openClienteModal(id = null) {
+  const c = id ? db.clienti.find(x => x.id === id) : { nome:'', cognome:'', telefono:'', email:'', indirizzo:'', note:'' };
+  openModal(`
+    <h2>${id ? 'Modifica' : 'Nuovo'} Cliente</h2>
+    ${checkVoiceSupport()}
+    ${!id && voiceSupported ? `
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoCliente" onclick="startVoiceClienteRapido()">🗣️ Dettato rapido cliente</button>
+      <div class="voice-hint">💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>"nome Mario cognome Rossi telefono 333 1234567 email mario@esempio.it"</div>
+    ` : ''}
+    <label>Nome</label>
+    <div class="input-with-voice"><input id="f_nome" value="${escapeHtml(c.nome)}" placeholder="Mario">${voiceButton('f_nome')}</div>
+    <label>Cognome</label>
+    <div class="input-with-voice"><input id="f_cognome" value="${escapeHtml(c.cognome)}" placeholder="Rossi">${voiceButton('f_cognome')}</div>
+    <label>Telefono</label>
+    <div class="input-with-voice"><input id="f_telefono" value="${escapeHtml(c.telefono)}" type="tel" placeholder="+39 333 1234567">${voiceButton('f_telefono')}</div>
+    <label>Email</label>
+    <div class="input-with-voice"><input id="f_email" value="${escapeHtml(c.email)}" type="email">${voiceButton('f_email')}</div>
+    <label>Indirizzo</label>
+    <div class="input-with-voice"><input id="f_indirizzo" value="${escapeHtml(c.indirizzo)}">${voiceButton('f_indirizzo')}</div>
+    <label>Note</label>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(c.note)}</textarea>${voiceButton('f_note', true)}</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveCliente(${id || 'null'})">💾 Salva</button>
+      ${id ? `<button class="btn btn-danger" onclick="deleteCliente(${id})">🗑️ Elimina</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Annulla</button>
+    </div>
+  `);
 }
 
-.voice-rapido:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); }
-.voice-rapido.listening { background: var(--danger); animation: pulse-voice 1s infinite; }
-.voice-rapido:disabled { opacity: 0.5; cursor: not-allowed; }
+async function saveCliente(id) {
+  const data = {
+    nome: document.getElementById('f_nome').value.trim(),
+    cognome: document.getElementById('f_cognome').value.trim(),
+    telefono: document.getElementById('f_telefono').value.trim(),
+    email: document.getElementById('f_email').value.trim(),
+    indirizzo: document.getElementById('f_indirizzo').value.trim(),
+    note: document.getElementById('f_note').value.trim()
+  };
+  if (!data.nome && !data.cognome) { alert('Inserisci almeno nome o cognome'); return; }
+  
+  try {
+    if (id) {
+      const c = db.clienti.find(x => x.id === id);
+      if (c) Object.assign(c, data);
+      await firestoreSet('clienti', id, data);
+    } else {
+      const newIdVal = newId();
+      db.clienti.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      await firestoreSet('clienti', newIdVal, data);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    saveDB();
+    closeModal();
+    
+    setTimeout(() => {
+      if (id && String(currentClienteId) === String(id)) renderSchedaCliente();
+      else renderCurrent();
+    }, 100);
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
+  }
+}
+async function deleteCliente(id) {
+  if (!confirm('⚠️ Eliminare il cliente e TUTTI i dati collegati (auto, interventi, preventivi)?\nQuesta azione non può essere annullata.')) return;
 
-.voice-hint {
-  font-size: 0.75rem;
-  color: var(--muted);
-  background: #f0f9ff;
-  padding: 8px 12px;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  border-left: 3px solid var(--primary);
+  setSyncStatus('syncing', '🔄 Eliminazione in corso...');
+
+  try {
+    // 1. Trova e elimina le AUTO di questo cliente direttamente su Firebase
+    // Usiamo una query diretta per essere sicuri di prenderle tutte, anche quelle con ID stringa o numero
+    const autoSnap = await dbFirestore.collection('auto').get();
+    const autoDaEliminare = autoSnap.docs.filter(doc => String(doc.data().clienteId) === String(id));
+    
+    const autoPromises = autoDaEliminare.map(async (doc) => {
+      const autoId = doc.id;
+      // Elimina anche gli interventi collegati a questa specifica auto
+      const intSnap = await dbFirestore.collection('interventi').get();
+      const intDaEliminare = intSnap.docs.filter(d => String(d.data().autoId) === String(autoId));
+      const intPromises = intDaEliminare.map(d => d.ref.delete());
+      await Promise.all(intPromises);
+      
+      // Elimina l'auto
+      return doc.ref.delete();
+    });
+    await Promise.all(autoPromises);
+
+    // 2. Elimina i PREVENTIVI di questo cliente
+    const prevSnap = await dbFirestore.collection('preventivi').get();
+    const prevDaEliminare = prevSnap.docs.filter(doc => String(doc.data().clienteId) === String(id));
+    const prevPromises = prevDaEliminare.map(doc => doc.ref.delete());
+    await Promise.all(prevPromises);
+
+    // 3. Elimina il CLIENTE
+    await dbFirestore.collection('clienti').doc(String(id)).delete();
+
+    // 4. Pulisci la cache locale e aggiorna l'interfaccia
+    db.clienti = db.clienti.filter(c => c.id !== id);
+    db.auto = db.auto.filter(a => String(a.clienteId) !== String(id));
+    db.interventi = db.interventi.filter(i => {
+      const auto = db.auto.find(a => a.id === i.autoId);
+      return auto && String(auto.clienteId) === String(id) ? false : true;
+    });
+    db.preventivi = db.preventivi.filter(p => String(p.clienteId) !== String(id));
+    
+    salvaCacheLocale();
+    updateHeader();
+
+    alert('✅ Cliente e tutti i dati collegati eliminati con successo.');
+    currentClienteId = null;
+    switchToTab('clienti');
+
+  } catch (err) {
+    console.error('Errore durante l\'eliminazione:', err);
+    alert('❌ Errore durante l\'eliminazione: ' + err.message);
+  } finally {
+    setSyncStatus('online', '🟢 Online');
+  }
 }
 
-.voice-hint strong { color: var(--primary); }
-
-.voice-preview {
-  background: #fef3c7;
-  border: 1px dashed var(--accent);
-  padding: 10px;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  font-size: 0.85rem;
+// ============================================================
+// AUTO CRUD
+// ============================================================
+function openAutoModal(id = null, prefillClienteId = null) {
+  const a = id ? db.auto.find(x => x.id === id) : { marca:'', modello:'', targa:'', telaio:'', anno:'', km:'', clienteId: prefillClienteId || currentClienteId || '', note:'' };
+  const opts = db.clienti.map(c => `<option value="${c.id}" ${String(c.id) === String(a.clienteId) ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
+  openModal(`
+    <h2>${id ? 'Modifica' : 'Nuova'} Auto</h2>
+    ${checkVoiceSupport()}
+    ${!id && voiceSupported ? `
+      <button type="button" class="voice-rapido" id="btnVoiceRapidoAuto" onclick="startVoiceAutoRapido()">🗣️ Dettato rapido auto</button>
+      <div class="voice-hint">💡 <strong>Suggerimento:</strong> dì qualcosa tipo:<br>"marca Fiat modello Panda targa AB 123 CD anno 2018 chilometri 85000"</div>
+    ` : ''}
+    <label>Cliente *</label>
+    <select id="f_clienteId"><option value="">-- Seleziona --</option>${opts}</select>
+    <label>Marca</label>
+    <div class="input-with-voice"><input id="f_marca" value="${escapeHtml(a.marca)}" placeholder="Fiat">${voiceButton('f_marca')}</div>
+    <label>Modello</label>
+    <div class="input-with-voice"><input id="f_modello" value="${escapeHtml(a.modello)}" placeholder="Panda">${voiceButton('f_modello')}</div>
+    <label>Targa</label>
+    <div class="input-with-voice"><input id="f_targa" value="${escapeHtml(a.targa)}" placeholder="AB123CD" style="text-transform:uppercase">${voiceButton('f_targa')}</div>
+    <label>Telaio (VIN)</label>
+    <div class="input-with-voice"><input id="f_telaio" value="${escapeHtml(a.telaio)}" placeholder="ZFA...">${voiceButton('f_telaio')}</div>
+    <label>Anno</label>
+    <div class="input-with-voice"><input id="f_anno" value="${escapeHtml(a.anno)}" type="number" placeholder="2018">${voiceButton('f_anno')}</div>
+    <label>Chilometri attuali</label>
+    <div class="input-with-voice"><input id="f_km" value="${escapeHtml(a.km)}" type="number" placeholder="85000">${voiceButton('f_km')}</div>
+    <label>Note</label>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(a.note)}</textarea>${voiceButton('f_note', true)}</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveAuto(${id || 'null'})">💾 Salva</button>
+      ${id ? `<button class="btn btn-danger" onclick="deleteAuto(${id})">🗑️ Elimina</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Annulla</button>
+    </div>
+  `);
 }
 
-.voice-preview .preview-title {
-  font-weight: 600;
-  color: var(--accent);
-  margin-bottom: 6px;
-  font-size: 0.8rem;
+async function saveAuto(id) {
+  const clienteIdRaw = document.getElementById('f_clienteId').value;
+  const clienteIdNum = Number(clienteIdRaw);
+  if (!clienteIdRaw || isNaN(clienteIdNum)) { alert('⚠️ Seleziona un cliente valido'); return; }
+  
+  const data = {
+    clienteId: clienteIdNum,
+    marca: document.getElementById('f_marca').value.trim(),
+    modello: document.getElementById('f_modello').value.trim(),
+    targa: document.getElementById('f_targa').value.trim().toUpperCase(),
+    telaio: document.getElementById('f_telaio').value.trim().toUpperCase(),
+    anno: document.getElementById('f_anno').value,
+    km: document.getElementById('f_km').value,
+    note: document.getElementById('f_note').value.trim()
+  };
+  
+  try {
+    if (id) {
+      // Aggiorna localmente subito (optimistic update)
+      const auto = db.auto.find(x => x.id === id);
+      if (auto) Object.assign(auto, data);
+      // Scrivi su Firebase
+      await firestoreSet('auto', id, data);
+    } else {
+      const newIdVal = newId();
+      // Aggiungi localmente subito (optimistic update)
+      db.auto.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      // Scrivi su Firebase
+      await firestoreSet('auto', newIdVal, data);
+    }
+    
+    // Aspetta che Firebase propaghi i dati al server
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    saveDB();
+    closeModal();
+    
+    if (String(currentClienteId) === String(data.clienteId)) {
+      renderSchedaCliente();
+    } else {
+      renderCurrent();
+    }
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
+  }
 }
 
-.voice-preview .preview-field {
-  display: flex;
-  justify-content: space-between;
-  padding: 2px 0;
+async function deleteAuto(id) {
+  if (!confirm('Eliminare l\'auto e tutti i suoi interventi/preventivi?')) return;
+  const auto = db.auto.find(a => a.id === id);
+  for (const i of db.interventi.filter(i => i.autoId === id)) await firestoreDelete('interventi', i.id);
+  for (const p of db.preventivi.filter(p => p.autoId === id)) await firestoreDelete('preventivi', p.id);
+  await firestoreDelete('auto', id);
+  
+  db.interventi = db.interventi.filter(i => i.autoId !== id);
+  db.preventivi = db.preventivi.filter(p => p.autoId !== id);
+  db.auto = db.auto.filter(a => a.id !== id);
+  
+  saveDB();
+  closeModal();
+  await new Promise(resolve => setTimeout(resolve, 500));
+  if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
+  else renderCurrent();
 }
 
-.voice-preview .preview-field span:first-child { color: var(--muted); }
-.voice-preview .preview-field span:last-child { font-weight: 500; }
+// ============================================================
+// INTERVENTI CRUD
+// ============================================================
+function openInterventoModal(id = null, prefillAutoId = null) {
+  const i = id ? db.interventi.find(x => x.id === id) : { 
+    autoId: prefillAutoId || '', tipo:'manutenzione', data: new Date().toISOString().slice(0,10), km:'', 
+    descrizione:'', pezzi:'', costoManodopera:'', costoPezzi:'', prossimoData:'', prossimoKm:'', note:'' 
+  };
+  let autoList = db.auto;
+  if (currentClienteId) autoList = autoList.filter(a => String(a.clienteId) === String(currentClienteId));
+  const opts = autoList.map(a => {
+    const c = db.clienti.find(x => x.id === a.clienteId);
+    const cn = c ? ` (${c.nome} ${c.cognome})` : '';
+    return `<option value="${a.id}" ${String(a.id) === String(i.autoId) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}${cn}</option>`;
+  }).join('');
+  const costoTot = (Number(i.costoManodopera) || 0) + (Number(i.costoPezzi) || 0);
+  
+  openModal(`
+    <h2>${id ? 'Modifica' : 'Nuovo'} Intervento</h2>
+    <label>Auto *</label>
+    <select id="f_autoId"><option value="">-- Seleziona --</option>${opts}</select>
+    <label>Tipo</label>
+    <select id="f_tipo">
+      <option value="manutenzione" ${i.tipo==='manutenzione'?'selected':''}>🛠️ Manutenzione</option>
+      <option value="riparazione" ${i.tipo==='riparazione'?'selected':''}>🔧 Riparazione</option>
+      <option value="diagnosi" ${i.tipo==='diagnosi'?'selected':''}>🔍 Diagnosi</option>
+      <option value="revisione" ${i.tipo==='revisione'?'selected':''}>📋 Revisione</option>
+      <option value="altro" ${i.tipo==='altro'?'selected':''}>📦 Altro</option>
+    </select>
+    <label>Data</label><input id="f_data" type="date" value="${i.data}">
+    <label>Chilometri</label><input id="f_km" type="number" value="${escapeHtml(i.km)}">
+    <label>Descrizione lavoro</label>
+    <div class="input-with-voice"><textarea id="f_descrizione" rows="3">${escapeHtml(i.descrizione)}</textarea>${voiceButton('f_descrizione', true)}</div>
+    <label>Pezzi ricambi</label>
+    <div class="input-with-voice"><textarea id="f_pezzi" rows="2">${escapeHtml(i.pezzi)}</textarea>${voiceButton('f_pezzi', true)}</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+      <div><label>Manodopera (€)</label><input id="f_costoManodopera" type="number" step="0.01" value="${escapeHtml(i.costoManodopera)}" oninput="aggiornaTotale()"></div>
+      <div><label>Pezzi (€)</label><input id="f_costoPezzi" type="number" step="0.01" value="${escapeHtml(i.costoPezzi)}" oninput="aggiornaTotale()"></div>
+    </div>
+    <div style="background:#f0f9ff; padding:10px; border-radius:8px; margin-bottom:10px; text-align:right">
+      <strong>Totale: <span id="totalePreview">${fmtEuro(costoTot)}</span></strong>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+      <div><label>Prossimo - Data</label><input id="f_prossimoData" type="date" value="${i.prossimoData}"></div>
+      <div><label>Prossimo - Km</label><input id="f_prossimoKm" type="number" value="${escapeHtml(i.prossimoKm)}"></div>
+    </div>
+    <label>Note</label>
+    <div class="input-with-voice"><textarea id="f_note" rows="2">${escapeHtml(i.note)}</textarea>${voiceButton('f_note', true)}</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveIntervento(${id || 'null'})">💾 Salva</button>
+      ${id ? `<button class="btn btn-danger" onclick="deleteIntervento(${id})">🗑️ Elimina</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Annulla</button>
+    </div>
+  `);
+}
 
-.voice-not-supported {
-  background: #fef3c7;
-  color: #92400e;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 0.8rem;
-  margin-bottom: 12px;
-  text-align: center;
-}
-.voice-rapido.listening {
-  background: linear-gradient(135deg, var(--danger), #b91c1c);
-  animation: pulse-voice 1s infinite;
+function aggiornaTotale() {
+  const m = Number(document.getElementById('f_costoManodopera').value) || 0;
+  const p = Number(document.getElementById('f_costoPezzi').value) || 0;
+  document.getElementById('totalePreview').textContent = fmtEuro(m + p);
 }
 
-.voice-rapido.listening::before {
-  content: '🔴 ';
-  animation: blink 1s infinite;
+async function saveIntervento(id) {
+  const autoIdRaw = document.getElementById('f_autoId').value;
+  const autoIdNum = Number(autoIdRaw);
+  if (!autoIdRaw || isNaN(autoIdNum)) { alert('⚠️ Seleziona un\'auto valida'); return; }
+
+  const data = {
+    autoId: autoIdNum,
+    tipo: document.getElementById('f_tipo').value,
+    data: document.getElementById('f_data').value,
+    km: document.getElementById('f_km').value,
+    descrizione: document.getElementById('f_descrizione').value.trim(),
+    pezzi: document.getElementById('f_pezzi').value.trim(),
+    costoManodopera: document.getElementById('f_costoManodopera').value,
+    costoPezzi: document.getElementById('f_costoPezzi').value,
+    costo: (Number(document.getElementById('f_costoManodopera').value) || 0) + (Number(document.getElementById('f_costoPezzi').value) || 0),
+    prossimoData: document.getElementById('f_prossimoData').value,
+    prossimoKm: document.getElementById('f_prossimoKm').value,
+    note: document.getElementById('f_note').value.trim()
+  };
+
+  try {
+    if (id) {
+      const int = db.interventi.find(x => x.id === id);
+      if (int) Object.assign(int, data);
+      await firestoreSet('interventi', id, data);
+    } else {
+      const newIdVal = newId();
+      db.interventi.push({ id: newIdVal, ...data, createdAt: new Date().toISOString() });
+      await firestoreSet('interventi', newIdVal, data);
+    }
+
+    if (data.km) {
+      const auto = db.auto.find(a => a.id === data.autoId);
+      if (auto && (!auto.km || Number(data.km) > Number(auto.km))) {
+        auto.km = data.km;
+        await firestoreSet('auto', auto.id, { ...auto, km: data.km });
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    saveDB();
+    closeModal();
+
+    const auto = db.auto.find(a => a.id === data.autoId);
+    if (auto && String(currentClienteId) === String(auto.clienteId)) {
+      renderSchedaCliente();
+    } else {
+      renderCurrent();
+    }
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
+  }
 }
 
-@keyframes blink {
-  0%, 50%, 100% { opacity: 1; }
-  25%, 75% { opacity: 0.3; }
+
+async function deleteIntervento(id) {
+  if (!confirm('Eliminare l\'intervento?')) return;
+  const int = db.interventi.find(i => i.id === id);
+  await firestoreDelete('interventi', id);
+  db.interventi = db.interventi.filter(i => i.id !== id);
+  saveDB();
+  closeModal();
+  if (int) {
+    const auto = db.auto.find(a => a.id === int.autoId);
+    if (auto && String(currentClienteId) === String(auto.clienteId)) renderSchedaCliente();
+    else renderCurrent();
+  }
 }
+
+// ============================================================
+// PREVENTIVI CRUD
+// ============================================================
+function openPreventivoModal(id = null) {
+  const p = id ? db.preventivi.find(x => x.id === id) : { 
+    clienteId: currentClienteId || '', autoId: '', data: new Date().toISOString().slice(0,10),
+    voci: [{ descrizione: '', quantita: 1, prezzo: 0 }], note: '', validoFino: '', stato: 'bozza'
+  };
+  const clientiOpts = db.clienti.map(c => `<option value="${c.id}" ${String(c.id) === String(p.clienteId) ? 'selected' : ''}>${escapeHtml(c.nome + ' ' + c.cognome)}</option>`).join('');
+  let autoList = p.clienteId ? db.auto.filter(a => String(a.clienteId) === String(p.clienteId)) : db.auto;
+  const autoOpts = autoList.map(a => `<option value="${a.id}" ${String(a.id) === String(p.autoId) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
+  
+  const vociHtml = p.voci.map((v, idx) => `
+    <div class="voce-row">
+      <input placeholder="Descrizione" value="${escapeHtml(v.descrizione)}" onchange="updateVoce(${idx}, 'descrizione', this.value)">
+      <input type="number" placeholder="Qtà" value="${v.quantita}" style="width:70px" onchange="updateVoce(${idx}, 'quantita', this.value)">
+      <input type="number" step="0.01" placeholder="€" value="${v.prezzo}" style="width:90px" onchange="updateVoce(${idx}, 'prezzo', this.value)">
+      <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})" title="Rimuovi voce">×</button>
+    </div>
+  `).join('');
+  
+  openModal(`
+    <h2>${id ? 'Modifica' : 'Nuovo'} Preventivo</h2>
+    <label>Cliente *</label>
+    <select id="f_clienteId" onchange="updatePrevField('clienteId', this.value); refreshAutoPrev()">
+      <option value="">-- Seleziona --</option>${clientiOpts}
+    </select>
+    <label>Auto</label>
+    <select id="f_autoId" onchange="updatePrevField('autoId', this.value)">
+      <option value="">-- Nessuna --</option>${autoOpts}
+    </select>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+      <div><label>Data</label><input type="date" id="f_data" value="${p.data}" onchange="updatePrevField('data', this.value)"></div>
+      <div><label>Valido fino al</label><input type="date" id="f_validoFino" value="${p.validoFino}" onchange="updatePrevField('validoFino', this.value)"></div>
+    </div>
+    <label>Stato</label>
+    <select id="f_stato" onchange="updatePrevField('stato', this.value)">
+      <option value="bozza" ${p.stato==='bozza'?'selected':''}>📝 Bozza</option>
+      <option value="inviato" ${p.stato==='inviato'?'selected':''}>📤 Inviato</option>
+      <option value="accettato" ${p.stato==='accettato'?'selected':''}>✅ Accettato</option>
+      <option value="rifiutato" ${p.stato==='rifiutato'?'selected':''}>❌ Rifiutato</option>
+    </select>
+    <label style="margin-top:10px">Voci</label>
+    <div id="vociContainer">${vociHtml}</div>
+    <button class="btn btn-secondary btn-sm" onclick="addVoce()">+ Aggiungi voce</button>
+    <label style="margin-top:16px">Note</label>
+    <textarea id="f_note" rows="2" onchange="updatePrevField('note', this.value)">${escapeHtml(p.note)}</textarea>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="savePreventivo(${id || 'null'})">💾 Salva</button>
+      ${id ? `<button class="btn btn-success" onclick="generatePDF(${id})">📄 PDF</button>` : ''}
+      ${id ? `<button class="btn btn-danger" onclick="deletePreventivo(${id})">🗑️</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Annulla</button>
+    </div>
+  `);
+  window.currentPreventivo = JSON.parse(JSON.stringify(p));
+}
+
+function refreshAutoPrev() {
+  const cid = window.currentPreventivo.clienteId;
+  const autoList = cid ? db.auto.filter(a => String(a.clienteId) === String(cid)) : db.auto;
+  const sel = document.getElementById('f_autoId');
+  const currentVal = window.currentPreventivo.autoId;
+  sel.innerHTML = '<option value="">-- Nessuna --</option>' + 
+    autoList.map(a => `<option value="${a.id}" ${String(a.id) === String(currentVal) ? 'selected' : ''}>${escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa)}</option>`).join('');
+}
+
+function updatePrevField(field, value) { window.currentPreventivo[field] = value; }
+function updateVoce(idx, field, value) {
+  window.currentPreventivo.voci[idx][field] = field === 'descrizione' ? value : Number(value);
+}
+
+// ✅ FUNZIONI CORRETTE PER AGGIUNGERE/RIMUOVERE VOCI SENZA RIAPRIRE IL MODAL
+function addVoce() {
+  if (!window.currentPreventivo) return;
+  window.currentPreventivo.voci.push({ descrizione: '', quantita: 1, prezzo: 0 });
+  renderVociContainer();
+}
+
+function removeVoce(idx) {
+  if (!window.currentPreventivo) return;
+  window.currentPreventivo.voci.splice(idx, 1);
+  renderVociContainer();
+}
+
+function renderVociContainer() {
+  const container = document.getElementById('vociContainer');
+  if (!container || !window.currentPreventivo) return;
+  container.innerHTML = window.currentPreventivo.voci.map((v, idx) => `
+    <div class="voce-row">
+      <input placeholder="Descrizione" value="${escapeHtml(v.descrizione)}" onchange="updateVoce(${idx}, 'descrizione', this.value)">
+      <input type="number" placeholder="Qtà" value="${v.quantita}" style="width:70px" onchange="updateVoce(${idx}, 'quantita', this.value)">
+      <input type="number" step="0.01" placeholder="€" value="${v.prezzo}" style="width:90px" onchange="updateVoce(${idx}, 'prezzo', this.value)">
+      <button class="btn btn-danger btn-sm" onclick="removeVoce(${idx})" title="Rimuovi voce">×</button>
+    </div>
+  `).join('');
+}
+
+async function savePreventivo(id) {
+  const p = window.currentPreventivo;
+  if (!p.clienteId) { alert('Seleziona un cliente'); return; }
+  if (!p.voci.length || p.voci.every(v => !v.descrizione)) { alert('Aggiungi almeno una voce'); return; }
+  
+  try {
+    if (id) {
+      const existing = db.preventivi.find(x => x.id === id);
+      if (existing) Object.assign(existing, p);
+      await firestoreSet('preventivi', id, p);
+    } else {
+      const newIdVal = newId();
+      db.preventivi.push({ id: newIdVal, ...p, createdAt: new Date().toISOString() });
+      await firestoreSet('preventivi', newIdVal, p);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    saveDB();
+    closeModal();
+    
+    if (String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
+    else renderCurrent();
+  } catch (err) {
+    alert('❌ Errore salvataggio: ' + err.message);
+  }
+}
+
+async function deletePreventivo(id) {
+  if (!confirm('Eliminare il preventivo?')) return;
+  const p = db.preventivi.find(x => x.id === id);
+  await firestoreDelete('preventivi', id);
+  db.preventivi = db.preventivi.filter(x => x.id !== id);
+  saveDB();
+  closeModal();
+  if (p && String(currentClienteId) === String(p.clienteId)) renderSchedaCliente();
+  else renderCurrent();
+}
+
+function generatePDF(id) {
+  const p = db.preventivi.find(x => x.id === id);
+  if (!p) return;
+  const cliente = db.clienti.find(c => String(c.id) === String(p.clienteId));
+  const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
+  const totale = p.voci.reduce((sum, v) => sum + ((Number(v.quantita) || 0) * (Number(v.prezzo) || 0)), 0);
+  
+  const html = `
+    <div class="preventivo-doc">
+      <!-- HEADER CON LOGO PNG -->
+      <div style="display:flex; align-items:center; gap:16px; padding-bottom:20px; border-bottom:3px solid #1e40af; margin-bottom:24px;">
+        <img src="logo.png" alt="Logo" style="width:80px; height:80px; object-fit:contain;">
+        <div style="flex:1;">
+          <h1 style="margin:0; color:#1e40af; font-size:1.8rem;">PREVENTIVO</h1>
+          <p style="margin:4px 0 0 0; color:#666; font-size:0.9rem;">N. ${String(p.id).padStart(4, '0')} del ${fmtDate(p.data)}</p>
+        </div>
+        <div style="text-align:right; font-size:0.85rem; color:#666;">
+          <div><strong>Gestione Officina</strong></div>
+          <div>Documento commerciale</div>
+        </div>
+      </div>
+      
+      <!-- INFO PREVENTIVO -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;">
+        <div>
+          <h3 style="color:#1e40af; margin-bottom:8px; font-size:1rem;">👤 Cliente</h3>
+          <p style="margin:4px 0;"><strong style="font-size:1.05rem;">${escapeHtml(cliente.nome + ' ' + cliente.cognome)}</strong></p>
+          ${cliente.telefono ? `<p style="margin:2px 0;">📞 ${escapeHtml(cliente.telefono)}</p>` : ''}
+          ${cliente.email ? `<p style="margin:2px 0;">✉️ ${escapeHtml(cliente.email)}</p>` : ''}
+          ${cliente.indirizzo ? `<p style="margin:2px 0;">🏠 ${escapeHtml(cliente.indirizzo)}</p>` : ''}
+        </div>
+        ${auto ? `
+          <div>
+            <h3 style="color:#1e40af; margin-bottom:8px; font-size:1rem;">🚗 Veicolo</h3>
+            <p style="margin:4px 0;"><strong>${escapeHtml(auto.marca + ' ' + auto.modello)}</strong></p>
+            <p style="margin:2px 0;">Targa: <strong>${escapeHtml(auto.targa)}</strong></p>
+            ${auto.anno ? `<p style="margin:2px 0;">Anno: ${escapeHtml(auto.anno)}</p>` : ''}
+            ${auto.telaio ? `<p style="margin:2px 0; font-size:0.85rem;">VIN: ${escapeHtml(auto.telaio)}</p>` : ''}
+          </div>
+        ` : ''}
+      </div>
+      
+      ${p.validoFino ? `<p style="background:#fef3c7; padding:10px; border-radius:6px; margin-bottom:20px;"><strong> Valido fino al:</strong> ${fmtDate(p.validoFino)}</p>` : ''}
+      
+      <!-- TABELLA VOCI -->
+      <table>
+        <thead>
+          <tr>
+            <th style="width:50%;">Descrizione</th>
+            <th style="width:10%;">Qtà</th>
+            <th style="width:20%;">Prezzo unit.</th>
+            <th style="width:20%;">Totale</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${p.voci.map(v => `
+            <tr>
+              <td>${escapeHtml(v.descrizione)}</td>
+              <td style="text-align:center;">${v.quantita}</td>
+              <td style="text-align:right;">${fmtEuro(v.prezzo)}</td>
+              <td style="text-align:right;"><strong>${fmtEuro((Number(v.quantita) || 0) * (Number(v.prezzo) || 0))}</strong></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      
+      <!-- TOTALE -->
+      <div style="text-align:right; margin-top:20px; padding:16px; background:#f0f9ff; border-radius:8px; border:2px solid #1e40af;">
+        <div style="font-size:0.9rem; color:#666;">TOTALE COMPLESSIVO</div>
+        <div style="font-size:1.8rem; font-weight:700; color:#1e40af;">${fmtEuro(totale)}</div>
+      </div>
+      
+      ${p.note ? `<div style="margin-top:24px; padding:12px; background:#f9fafb; border-left:4px solid #1e40af; border-radius:4px;"><strong>Note:</strong><br>${escapeHtml(p.note).replace(/\n/g,'<br>')}</div>` : ''}
+      
+      <!-- FOOTER -->
+      <div style="margin-top:40px; padding-top:16px; border-top:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; color:#666;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <img src="logo.png" alt="Logo" style="width:24px; height:24px; object-fit:contain;">
+          <span>Gestione Officina</span>
+        </div>
+        <div>Documento generato il ${new Date().toLocaleString('it-IT')}</div>
+      </div>
+    </div>
+  `;
+  
+  const template = document.getElementById('preventivoTemplate');
+  template.innerHTML = html;
+  template.style.display = 'block';
+  
+  setTimeout(() => {
+    html2canvas(template.querySelector('.preventivo-doc'), { 
+      scale: 2, 
+      useCORS: true, 
+      logging: false,
+      allowTaint: true  // Permette di caricare immagini locali
+    }).then(canvas => {
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+      pdf.save(`preventivo_${cliente.cognome}_${p.data}.pdf`);
+      template.style.display = 'none';
+      template.innerHTML = '';
+    }).catch(err => {
+      console.error('Errore generazione PDF:', err);
+      alert('❌ Errore nella generazione del PDF: ' + err.message);
+      template.style.display = 'none';
+    });
+  }, 500);  // Aumentato a 500ms per dare tempo al PNG di caricarsi
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function renderCurrent() {
+  if (currentTab === 'dashboard') renderDashboard();
+  else if (currentTab === 'clienti') {
+    if (currentClienteId) renderSchedaCliente();
+    else renderListaClienti();
+  }
+  else if (currentTab === 'ricambi') renderRicambi();
+  else if (currentTab === 'impostazioni') renderImpostazioni();
+}
+
+function switchToTab(tabName) {
+  currentTab = tabName;
+  currentClienteId = null;
+  tabs.forEach(x => x.classList.toggle('active', x.dataset.tab === tabName));
+  showView('view-' + tabName);
+  renderCurrent();
+}
+
+function renderDashboard() {
+  const v = document.getElementById('view-dashboard');
+  const totClienti = db.clienti.length;
+  const totAuto = db.auto.length;
+  const totInterventi = db.interventi.length;
+  const incassoTot = db.interventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
+  const prossimi = [];
+  db.interventi.forEach(i => {
+    const auto = db.auto.find(a => String(a.id) === String(i.autoId));
+    if (!auto) return;
+    const cliente = db.clienti.find(c => String(c.id) === String(auto.clienteId));
+    if (!cliente) return;
+    if (i.prossimoData) {
+      const d = daysUntil(i.prossimoData);
+      if (d !== null && d <= 30) prossimi.push({ ...i, auto, cliente, alertType: 'data', daysLeft: d });
+    }
+    if (i.prossimoKm && auto.km) {
+      const diff = Number(i.prossimoKm) - Number(auto.km);
+      if (diff <= 1000) prossimi.push({ ...i, auto, cliente, alertType: 'km', kmLeft: diff });
+    }
+  });
+  const ultimi = [...db.interventi].sort((a,b) => (b.data||'').localeCompare(a.data||'')).slice(0, 5);
+  v.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="num">${totClienti}</div><div class="lbl">Clienti</div></div>
+      <div class="stat"><div class="num">${totAuto}</div><div class="lbl">Auto</div></div>
+      <div class="stat"><div class="num">${totInterventi}</div><div class="lbl">Interventi</div></div>
+      <div class="stat"><div class="num">${fmtEuro(incassoTot)}</div><div class="lbl">Incassi totali</div></div>
+    </div>
+    ${prossimi.length ? `
+      <div class="card">
+        <h3>⚠️ Prossimi interventi (${prossimi.length})</h3>
+        ${prossimi.map(p => {
+          const alert = p.alertType === 'data'
+            ? (p.daysLeft < 0 ? `<span style="color:var(--danger)">Scaduto da ${-p.daysLeft}gg</span>` : `Tra ${p.daysLeft}gg`)
+            : (p.kmLeft < 0 ? `<span style="color:var(--danger)">Superati di ${-p.kmLeft}km</span>` : `Tra ${p.kmLeft}km`);
+          return `
+            <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${p.cliente.id})">
+              <div class="item-head">
+                <div>
+                  <div class="item-title">${escapeHtml(p.cliente.nome + ' ' + p.cliente.cognome)}</div>
+                  <div class="item-sub">${escapeHtml(p.auto.marca + ' ' + p.auto.modello)} • ${p.auto.targa} • <span class="badge ${p.tipo}">${p.tipo}</span></div>
+                </div>
+                <div style="text-align:right;font-size:0.8rem">${alert}</div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+    <div class="card">
+      <h3>🕐 Ultimi interventi</h3>
+      ${ultimi.length ? ultimi.map(i => {
+        const auto = db.auto.find(a => String(a.id) === String(i.autoId));
+        const cliente = auto ? db.clienti.find(c => String(c.id) === String(auto.clienteId)) : null;
+        if (!cliente) return '';
+        return `
+          <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${cliente.id})">
+            <div class="item-head">
+              <div>
+                <div class="item-title">${escapeHtml(cliente.nome + ' ' + cliente.cognome)}</div>
+                <div class="item-sub">${auto ? escapeHtml(auto.marca + ' ' + auto.modello) : '?'} • ${fmtDate(i.data)} • <span class="badge ${i.tipo}">${i.tipo}</span></div>
+              </div>
+              <div style="font-weight:600">${fmtEuro(i.costo)}</div>
+            </div>
+          </div>
+        `;
+      }).join('') : '<div class="empty"><div class="empty-icon">📭</div>Nessun intervento</div>'}
+    </div>
+  `;
+}
+
+function renderListaClienti() {
+  const v = document.getElementById('view-clienti');
+  const search = (window.searchClienti || '').toLowerCase().trim();
+  let risultati = [];
+  if (!search) {
+    risultati = [...db.clienti].sort((a,b) => (a.cognome + a.nome).localeCompare(b.cognome + b.nome));
+    v.innerHTML = `
+      <input class="search" placeholder="🔍 Cerca cliente, targa, telaio..." value="" oninput="window.searchClienti=this.value; renderListaClienti()">
+      <button class="btn btn-primary btn-block" onclick="openClienteModal()" style="margin-bottom:16px">+ Nuovo cliente</button>
+      ${risultati.length ? risultati.map(c => renderCardCliente(c)).join('') : '<div class="empty"><div class="empty-icon">👥</div>Nessun cliente</div>'}
+    `;
+    return;
+  }
+  db.clienti.forEach(c => {
+    const txt = (c.nome + ' ' + c.cognome + ' ' + c.telefono + ' ' + c.email).toLowerCase();
+    if (txt.includes(search)) risultati.push({ type: 'cliente', data: c });
+  });
+  db.auto.forEach(a => {
+    const c = db.clienti.find(x => String(x.id) === String(a.clienteId));
+    if (!c) return;
+    const txt = (a.marca + ' ' + a.modello + ' ' + a.targa + ' ' + a.telaio + ' ' + c.nome + ' ' + c.cognome).toLowerCase();
+    if (txt.includes(search) && !risultati.some(r => r.type === 'cliente' && r.data.id === c.id)) {
+      risultati.push({ type: 'cliente', data: c, matchInfo: `trovato via auto: ${a.targa}` });
+    }
+  });
+  v.innerHTML = `
+    <input class="search" placeholder="🔍 Cerca cliente, targa, telaio..." value="${escapeHtml(search)}" oninput="window.searchClienti=this.value; renderListaClienti()">
+    <button class="btn btn-primary btn-block" onclick="openClienteModal()" style="margin-bottom:16px">+ Nuovo cliente</button>
+    ${risultati.length ? `
+      <div style="font-size:0.85rem; color:var(--muted); margin-bottom:10px">${risultati.length} risultat${risultati.length === 1 ? 'o' : 'i'}</div>
+      ${risultati.map(r => renderCardCliente(r.data, r.matchInfo)).join('')}
+    ` : '<div class="empty"><div class="empty-icon">🔍</div>Nessun risultato</div>'}
+  `;
+}
+
+function renderCardCliente(c, matchInfo = '') {
+  const autoCount = db.auto.filter(a => String(a.clienteId) === String(c.id)).length;
+  const intCount = db.interventi.filter(i => {
+    const a = db.auto.find(x => String(x.id) === String(i.autoId));
+    return a && String(a.clienteId) === String(c.id);
+  }).length;
+  const prevCount = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).length;
+  const ultimaAuto = db.auto.filter(a => String(a.clienteId) === String(c.id)).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''))[0];
+  return `
+    <div class="item" style="cursor:pointer" onclick="apriSchedaCliente(${c.id})">
+      <div class="item-head">
+        <div>
+          <div class="item-title">${escapeHtml(c.nome + ' ' + c.cognome)}</div>
+          <div class="item-sub">${escapeHtml(c.telefono || '')}</div>
+          ${ultimaAuto ? `<div class="item-sub">🚗 ${escapeHtml(ultimaAuto.marca + ' ' + ultimaAuto.modello)} • ${escapeHtml(ultimaAuto.targa)}</div>` : ''}
+          ${matchInfo ? `<div class="item-sub" style="color:var(--accent)">🔎 ${escapeHtml(matchInfo)}</div>` : ''}
+        </div>
+        <div style="text-align:right; font-size:0.75rem">
+          <span class="badge">${autoCount} auto</span><br>
+          <span class="badge">${intCount} lav.</span>
+          ${prevCount ? `<br><span class="badge">${prevCount} prev.</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function apriSchedaCliente(id) {
+  currentClienteId = id;
+  currentSubTab = 'auto';
+  showView('view-scheda-cliente');
+  renderSchedaCliente();
+}
+
+function tornaAListaClienti() {
+  currentClienteId = null;
+  showView('view-clienti');
+  renderListaClienti();
+}
+
+function setSubTab(tab) {
+  currentSubTab = tab;
+  renderSchedaCliente();
+}
+
+function renderSchedaCliente() {
+  const v = document.getElementById('view-scheda-cliente');
+  const c = db.clienti.find(x => x.id === currentClienteId);
+  if (!c) { tornaAListaClienti(); return; }
+  
+  const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
+  const tuttiInterventi = [];
+  autoList.forEach(a => {
+    db.interventi.filter(i => String(i.autoId) === String(a.id)).forEach(i => tuttiInterventi.push({ ...i, auto: a }));
+  });
+  tuttiInterventi.sort((a,b) => (b.data||'').localeCompare(a.data||''));
+  const preventiviList = db.preventivi.filter(p => String(p.clienteId) === String(c.id)).sort((a,b) => (b.data||'').localeCompare(a.data||''));
+  const incassoTot = tuttiInterventi.reduce((s,i) => s + (Number(i.costo) || 0), 0);
+  
+  let contentHtml = '';
+  if (currentSubTab === 'auto') contentHtml = renderSubTabAuto(c, autoList);
+  else if (currentSubTab === 'storico') contentHtml = renderSubTabStorico(c, tuttiInterventi);
+  else if (currentSubTab === 'preventivi') contentHtml = renderSubTabPreventivi(c, preventiviList);
+  
+  v.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <button class="btn btn-secondary" onclick="tornaAListaClienti()" style="padding:8px 12px; display:flex; align-items:center; gap:6px;">
+        ← Indietro
+      </button>
+      <span style="color:var(--muted); font-size:0.9rem;">Scheda Cliente</span>
+    </div>
+    <div class="scheda-header">
+      <h2>${escapeHtml(c.nome + ' ' + c.cognome)}</h2>
+      ${c.telefono ? `<div class="sub-info">📞 ${escapeHtml(c.telefono)}</div>` : ''}
+      ${c.email ? `<div class="sub-info">✉️ ${escapeHtml(c.email)}</div>` : ''}
+      ${c.indirizzo ? `<div class="sub-info">🏠 ${escapeHtml(c.indirizzo)}</div>` : ''}
+      <div class="quick-actions">
+        ${c.telefono ? `<a href="tel:${escapeHtml(c.telefono)}" class="btn">📞 Chiama</a>` : ''}
+        ${c.email ? `<a href="mailto:${escapeHtml(c.email)}" class="btn">✉️ Email</a>` : ''}
+        <button class="btn" onclick="openClienteModal(${c.id})">✏️ Modifica</button>
+        <button class="btn" onclick="openPreventivoModal()">📄 Nuovo prev.</button>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">${autoList.length}</div><div class="lbl">Auto</div></div>
+      <div class="stat"><div class="num">${tuttiInterventi.length}</div><div class="lbl">Interventi</div></div>
+      <div class="stat"><div class="num">${preventiviList.length}</div><div class="lbl">Preventivi</div></div>
+      <div class="stat"><div class="num">${fmtEuro(incassoTot)}</div><div class="lbl">Totale speso</div></div>
+    </div>
+    ${c.note ? `<div class="card"><h3>📝 Note</h3><p style="font-size:0.9rem">${escapeHtml(c.note)}</p></div>` : ''}
+    <div class="sub-tabs">
+      <div class="sub-tab ${currentSubTab==='auto'?'active':''}" onclick="setSubTab('auto')">🚗 Auto (${autoList.length})</div>
+      <div class="sub-tab ${currentSubTab==='storico'?'active':''}" onclick="setSubTab('storico')">🕐 Storico (${tuttiInterventi.length})</div>
+      <div class="sub-tab ${currentSubTab==='preventivi'?'active':''}" onclick="setSubTab('preventivi')">📄 Preventivi (${preventiviList.length})</div>
+    </div>
+    ${contentHtml}
+  `;
+}
+
+function renderSubTabAuto(c, autoList) {
+  if (!autoList.length) {
+    return `<div class="empty"><div class="empty-icon">🚗</div><p>Nessuna auto</p>
+      <button class="btn btn-primary" onclick="openAutoModal(null, ${c.id})" style="margin-top:10px">+ Aggiungi prima auto</button></div>`;
+  }
+  return `
+    <button class="btn btn-primary btn-block" onclick="openAutoModal(null, ${c.id})" style="margin-bottom:12px">+ Aggiungi auto</button>
+    ${autoList.map(a => {
+      const ultimi = db.interventi.filter(i => String(i.autoId) === String(a.id)).sort((x,y) => (y.data||'').localeCompare(x.data||'')).slice(0, 2);
+      return `
+        <div class="auto-card">
+          <div class="auto-card-head">
+            <div>
+              <div class="item-title">${escapeHtml(a.marca + ' ' + a.modello)}</div>
+              <div class="auto-info">
+                <span>🔖 <b>${escapeHtml(a.targa)}</b></span>
+                <span>📅 ${escapeHtml(a.anno || '?')}</span>
+                <span>🛣️ ${fmtKm(a.km)}</span>
+              </div>
+              ${a.telaio ? `<div class="auto-info">VIN: ${escapeHtml(a.telaio)}</div>` : ''}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px">
+              <button class="btn btn-primary btn-sm" onclick="openInterventoModal(null, ${a.id})">+ Intervento</button>
+              <button class="btn btn-secondary btn-sm" onclick="openAutoModal(${a.id})">✏️</button>
+            </div>
+          </div>
+          ${a.note ? `<div class="auto-info" style="margin-top:6px; font-style:italic">${escapeHtml(a.note)}</div>` : ''}
+          ${ultimi.length ? `
+            <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border)">
+              <div style="font-size:0.75rem; color:var(--muted); margin-bottom:6px">Ultimi interventi:</div>
+              ${ultimi.map(i => `
+                <div style="font-size:0.85rem; padding:4px 0; display:flex; justify-content:space-between; gap:8px">
+                  <span><span class="badge ${i.tipo}">${i.tipo}</span> ${fmtDate(i.data)}</span>
+                  <span style="color:var(--muted)">${fmtEuro(i.costo)}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+function renderSubTabStorico(c, interventi) {
+  const autoList = db.auto.filter(a => String(a.clienteId) === String(c.id));
+  const filterAuto = window.filterAutoCliente || 'tutti';
+  let filtered = interventi;
+  if (filterAuto !== 'tutti') filtered = interventi.filter(i => String(i.auto.id) === String(filterAuto));
+  return `
+    ${autoList.length > 1 ? `
+      <div class="toolbar">
+        <button class="btn btn-sm ${filterAuto==='tutti'?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente='tutti'; renderSchedaCliente()">Tutte</button>
+        ${autoList.map(a => `<button class="btn btn-sm ${String(filterAuto)===String(a.id)?'btn-primary':'btn-secondary'}" onclick="window.filterAutoCliente=${a.id}; renderSchedaCliente()">${escapeHtml(a.targa)}</button>`).join('')}
+      </div>
+    ` : ''}
+    ${filtered.length ? `
+      <div class="timeline">
+        ${filtered.map(i => `
+          <div class="timeline-item" onclick="showDettaglioIntervento(${i.id})">
+            <div class="timeline-date">${fmtDate(i.data)} • ${fmtKm(i.km)}</div>
+            <div class="timeline-title">
+              ${autoList.length > 1 ? `<span style="color:var(--accent)">${escapeHtml(i.auto.targa)}</span> • ` : ''}
+              <span class="badge ${i.tipo}">${i.tipo}</span>
+            </div>
+            <div class="timeline-meta">${escapeHtml(i.descrizione || 'Nessuna descrizione').slice(0, 100)}</div>
+            <div style="margin-top:6px; font-weight:600; color:var(--primary)">${fmtEuro(i.costo)}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : '<div class="empty"><div class="empty-icon">🕐</div>Nessun intervento</div>'}
+  `;
+}
+
+function renderSubTabPreventivi(c, preventivi) {
+  if (!preventivi.length) {
+    return `<div class="empty"><div class="empty-icon">📄</div><p>Nessun preventivo</p>
+      <button class="btn btn-primary" onclick="openPreventivoModal()" style="margin-top:10px">+ Crea preventivo</button></div>`;
+  }
+  const statoLabel = { bozza: '📝 Bozza', inviato: '📤 Inviato', accettato: '✅ Accettato', rifiutato: '❌ Rifiutato' };
+  const statoColor = { bozza: '#6b7280', inviato: '#1e40af', accettato: '#16a34a', rifiutato: '#dc2626' };
+  return `
+    <button class="btn btn-primary btn-block" onclick="openPreventivoModal()" style="margin-bottom:12px">+ Nuovo preventivo</button>
+    ${preventivi.map(p => {
+      // Assicurati che voci sia un array
+      const voci = Array.isArray(p.voci) ? p.voci : [];
+      const auto = p.autoId ? db.auto.find(a => String(a.id) === String(p.autoId)) : null;
+      const totale = voci.reduce((s, v) => s + ((Number(v.quantita) || 0) * (Number(v.prezzo) || 0)), 0);
+      return `
+        <div class="item" style="cursor:pointer" onclick="openPreventivoModal(${p.id})">
+          <div class="item-head">
+            <div>
+              <div class="item-title">Preventivo #${String(p.id).padStart(4, '0')}</div>
+              <div class="item-sub">${fmtDate(p.data)}${auto ? ' • ' + escapeHtml(auto.marca + ' ' + auto.modello + ' ' + auto.targa) : ''}</div>
+              <div style="margin-top:4px">
+                <span style="font-size:0.75rem; color:${statoColor[p.stato]}; font-weight:600">${statoLabel[p.stato] || p.stato}</span>
+                <span style="font-size:0.75rem; color:var(--muted); margin-left:8px">${voci.length} voc${voci.length === 1 ? 'e' : 'i'}</span>
+              </div>
+            </div>
+            <div style="text-align:right; display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+              <div style="font-weight:700; font-size:1.2rem; color:var(--primary); background:#f0f9ff; padding:6px 12px; border-radius:8px;">
+                ${fmtEuro(totale)}
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-success btn-sm" onclick="event.stopPropagation(); generatePDF(${p.id})">📄 PDF</button>
+                <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deletePreventivo(${p.id})">🗑️ Elimina</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+function showDettaglioIntervento(id) {
+  const i = db.interventi.find(x => x.id === id);
+  if (!i) return;
+  const a = db.auto.find(x => String(x.id) === String(i.autoId));
+  openModal(`
+    <h2><span class="badge ${i.tipo}">${i.tipo}</span> ${fmtDate(i.data)}</h2>
+    <div class="detail-row"><span>🚗 Auto</span><span>${a ? escapeHtml(a.marca + ' ' + a.modello + ' ' + a.targa) : '-'}</span></div>
+    <div class="detail-row"><span>🛣️ Km</span><span>${fmtKm(i.km)}</span></div>
+    <div class="detail-row"><span>💰 Manodopera</span><span>${fmtEuro(i.costoManodopera)}</span></div>
+    <div class="detail-row"><span>🔩 Pezzi</span><span>${fmtEuro(i.costoPezzi)}</span></div>
+    <div class="detail-row"><span><b>Totale</b></span><span><b>${fmtEuro(i.costo)}</b></span></div>
+    ${i.descrizione ? `<div class="detail-row"><span>📝 Lavoro</span><span>${escapeHtml(i.descrizione)}</span></div>` : ''}
+    ${i.pezzi ? `<div class="detail-row"><span>🔩 Pezzi</span><span>${escapeHtml(i.pezzi)}</span></div>` : ''}
+    ${i.prossimoData ? `<div class="detail-row"><span>📅 Prossimo (data)</span><span>${fmtDate(i.prossimoData)}</span></div>` : ''}
+    ${i.prossimoKm ? `<div class="detail-row"><span>🛣️ Prossimo (km)</span><span>${fmtKm(i.prossimoKm)}</span></div>` : ''}
+    ${i.note ? `<div class="detail-row"><span>📌 Note</span><span>${escapeHtml(i.note)}</span></div>` : ''}
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="closeModal(); setTimeout(()=>openInterventoModal(${id}),100)">✏️ Modifica</button>
+    </div>
+  `);
+}
+
+function renderRicambi() {
+  const v = document.getElementById('view-ricambi');
+  v.innerHTML = `
+    <div class="card">
+      <h3>🔩 Ricerca Ricambi</h3>
+      <label>Marca</label><input id="ricerca_marca" placeholder="es. Fiat">
+      <label>Modello</label><input id="ricerca_modello" placeholder="es. Panda">
+      <label>Anno</label><input id="ricerca_anno" type="number" placeholder="es. 2018">
+      <label>Tipo</label>
+      <select id="ricerca_tipo">
+        <option value="">-- Tutti --</option>
+        <option value="filtro olio">Filtro olio</option>
+        <option value="filtro aria">Filtro aria</option>
+        <option value="olio motore">Olio motore</option>
+        <option value="pastiglie freni">Pastiglie freni</option>
+        <option value="candele">Candele</option>
+        <option value="batteria">Batteria</option>
+      </select>
+      <button class="btn btn-primary btn-block" onclick="cercaRicambi()">🔍 Cerca</button>
+    </div>
+    <div id="risultatiRicambi"></div>
+  `;
+}
+
+function cercaRicambi() {
+  const marca = document.getElementById('ricerca_marca').value.trim();
+  const modello = document.getElementById('ricerca_modello').value.trim();
+  const anno = document.getElementById('ricerca_anno').value;
+  const tipo = document.getElementById('ricerca_tipo').value;
+  const query = [marca, modello, anno, tipo].filter(x => x).join(' ');
+  if (!query) { alert('Inserisci almeno un parametro'); return; }
+  document.getElementById('risultatiRicambi').innerHTML = `
+    <div class="card">
+      <h3>🔍 Cerca: "${escapeHtml(query)}"</h3>
+      <div class="btn-row" style="margin-top:10px">
+        <a href="https://www.auto-doc.it/?q=${encodeURIComponent(query)}" target="_blank" class="btn btn-primary">🔧 AutoDoc</a>
+        <a href="https://www.ebay.it/sch/i.html?_nkw=${encodeURIComponent(query + ' ricambio')}" target="_blank" class="btn btn-accent">🛒 eBay</a>
+        <a href="https://www.amazon.it/s?k=${encodeURIComponent(query + ' ricambio auto')}" target="_blank" class="btn btn-success">📦 Amazon</a>
+      </div>
+    </div>
+  `;
+}
+
+function renderImpostazioni() {
+  const v = document.getElementById('view-impostazioni');
+  const size = new Blob([JSON.stringify(db)]).size;
+  v.innerHTML = `
+    <div class="card">
+      <h3>☁️ Sincronizzazione</h3>
+      <p class="item-sub">✅ I dati sono sincronizzati su Firebase in tempo reale</p>
+      <p class="item-sub">📱 Funziona su più dispositivi contemporaneamente</p>
+      <p class="item-sub">💾 Cache locale disponibile anche offline</p>
+    </div>
+    <div class="card">
+      <h3>🔐 Sessione</h3>
+      <button class="btn btn-danger btn-block" onclick="logout()">🚪 Esci (logout)</button>
+    </div>
+    <div class="card">
+      <h3>💾 Backup dati</h3>
+      <p class="item-sub" style="margin-bottom:10px">Dimensione locale: ${(size/1024).toFixed(1)} KB</p>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="exportData()">📤 Esporta JSON</button>
+        <button class="btn btn-accent" onclick="document.getElementById('importFile').click()">📥 Importa</button>
+        <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+      </div>
+    </div>
+    <div class="card">
+      <h3>ℹ️ Info</h3>
+      <div class="detail-row"><span>Versione</span><span>4.1 - Firebase + Vocale + Fix</span></div>
+      <div class="detail-row"><span>Clienti</span><span>${db.clienti.length}</span></div>
+      <div class="detail-row"><span>Auto</span><span>${db.auto.length}</span></div>
+      <div class="detail-row"><span>Interventi</span><span>${db.interventi.length}</span></div>
+      <div class="detail-row"><span>Preventivi</span><span>${db.preventivi.length}</span></div>
+    </div>
+  `;
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'officina_backup_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.clienti || !data.auto || !data.interventi) throw new Error('Formato non valido');
+      if (!confirm('Sostituire TUTTI i dati (anche sul cloud)?')) return;
+      
+      const collections = ['clienti', 'auto', 'interventi', 'preventivi'];
+      for (const col of collections) {
+        const snap = await dbFirestore.collection(col).get();
+        for (const doc of snap.docs) await doc.ref.delete();
+      }
+      for (const c of data.clienti) { const { id, ...rest } = c; await dbFirestore.collection('clienti').doc(String(id)).set(rest); }
+      for (const a of data.auto) { const { id, ...rest } = a; await dbFirestore.collection('auto').doc(String(id)).set(rest); }
+      for (const i of data.interventi) { const { id, ...rest } = i; await dbFirestore.collection('interventi').doc(String(id)).set(rest); }
+      for (const p of (data.preventivi || [])) { const { id, ...rest } = p; await dbFirestore.collection('preventivi').doc(String(id)).set(rest); }
+      await dbFirestore.collection('config').doc('ids').set({ nextId: data.nextId || 1 });
+      
+      alert('✅ Dati importati su Firebase');
+      location.reload();
+    } catch(err) { alert('❌ ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+function initApp() {
+  updateHeader();
+  renderCurrent();
+}
+
+window.addEventListener('online', () => setSyncStatus('online', '🟢 Online'));
+window.addEventListener('offline', () => setSyncStatus('offline', '⚫ Offline'));
